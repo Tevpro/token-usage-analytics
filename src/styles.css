@@ -101,6 +101,7 @@
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+    overflow-x: clip;
   }
 
   button,
@@ -113,6 +114,14 @@
   margin: 0 auto;
   width: min(1380px, calc(100% - 32px));
   padding: 22px 0 40px;
+  overflow-x: clip;
+}
+
+@media (max-width: 768px) {
+  .dashboard-shell {
+    width: calc(100% - 20px);
+    padding-top: 16px;
+  }
 }
 
 .dashboard-header {
@@ -236,6 +245,7 @@
   border-color: var(--border);
   background: white;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  min-width: 0;
 }
 
 .analytics-grid {
@@ -260,6 +270,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 16px;
 }
 
@@ -274,6 +285,14 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 12px;
+  max-width: 100%;
+}
+
+@media (max-width: 768px) {
+  .legend-row {
+    justify-content: flex-start;
+    gap: 8px;
+  }
 }
 
 .legend-item,
@@ -298,12 +317,14 @@
 
 .chart-block {
   min-height: 228px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chart-block-bars {
   display: flex;
   align-items: end;
-  gap: 8px;
+  gap: clamp(4px, 1.5vw, 8px);
   height: 228px;
   padding-top: 8px;
 }
@@ -318,13 +339,13 @@
   flex: 1;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .bar-stack {
   display: flex;
   align-items: end;
-  gap: 3px;
+  gap: 2px;
   height: 190px;
   width: 100%;
 }
@@ -362,6 +383,9 @@
 .chart-label {
   color: #64748b;
   font-size: 0.72rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
@@ -372,8 +396,60 @@
 }
 
 .line-chart {
+  display: block;
   width: 100%;
-  height: 228px;
+  max-width: 100%;
+  height: auto;
+  min-height: 228px;
+  aspect-ratio: 320 / 150;
+}
+
+@media (max-width: 768px) {
+  .chart-block {
+    min-height: 188px;
+  }
+
+  .chart-block-bars {
+    height: 188px;
+  }
+
+  .chart-block-thick {
+    gap: 8px;
+  }
+
+  .bar-stack {
+    height: 150px;
+  }
+
+  .chart-label {
+    font-size: 0.64rem;
+  }
+
+  .chart-label-wide {
+    max-width: 56px;
+  }
+
+  .line-chart {
+    min-height: 188px;
+  }
+}
+
+@media (max-width: 560px) {
+  .chart-block-bars {
+    gap: 4px;
+  }
+
+  .bar-group {
+    gap: 6px;
+  }
+
+  .bar-stack {
+    height: 136px;
+  }
+
+  .chart-label-wide {
+    max-width: 48px;
+  }
 }
 
 .chart-axis,

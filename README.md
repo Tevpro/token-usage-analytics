@@ -1,6 +1,6 @@
 ## TL;DR
 
-This repo is the foundation for an internal token-usage analytics app built with TanStack Start and deployed on Cloudflare Workers. It includes a dashboard shell inspired by the attached observability UI, Cloudflare + D1 wiring, a normalized daily-rollup schema, and a GitHub issue pack for the real ingestion pipeline.
+This repo is an internal token-usage analytics app built with TanStack Start and deployed on Cloudflare Workers. It now supports pulling real OpenAI organization usage and cost data into Cloudflare D1, then serving the dashboard from D1 for cheap, fast reads.
 
 ## What is in here
 
@@ -69,7 +69,11 @@ Before that, create the D1 database, paste the real `database_id` into `wrangler
 - `docs/cloudflare-deployment.md`
 - `docs/github-actions.md`
 
-GitHub Actions deployment is wired for automatic deploys from `main` after you add the required repository secrets:
+GitHub Actions deployment is wired in two lanes after you add the required repository secrets:
+- PRs deploy a Cloudflare preview worker at `https://token-usage-analytics-pr-<PR_NUMBER>.tevpro.workers.dev`
+- `main` deploys production and applies remote D1 migrations
+
+Required repository secrets:
 - `CLOUDFLARE_API_TOKEN`
 - `CLOUDFLARE_ACCOUNT_ID`
 
