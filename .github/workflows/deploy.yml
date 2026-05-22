@@ -37,7 +37,7 @@ jobs:
         run: npm run build
 
       - name: Apply remote D1 migrations
-        run: npx wrangler d1 migrations apply token-usage-analytics --remote
+        run: npx wrangler d1 migrations apply token_analytics --remote
 
       - name: Deploy worker
         run: npx wrangler deploy

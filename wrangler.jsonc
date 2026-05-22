@@ -10,8 +10,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "token-usage-analytics",
-      "database_id": "YOUR_D1_DATABASE_ID",
+      "database_name": "token_analytics",
+      "database_id": "ad6be060-9240-4b93-be49-e1e809b2213a",
       "migrations_dir": "./migrations"
     }
   ]

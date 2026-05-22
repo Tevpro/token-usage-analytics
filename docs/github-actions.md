@@ -38,7 +38,7 @@ This repo still ships with a placeholder:
 Replace it with the real ID from:
 
 ```bash
-npx wrangler d1 create token-usage-analytics
+npx wrangler d1 create token_analytics
 ```
 
 ### 2. Wrangler auth must work with the token

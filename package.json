@@ -16,8 +16,8 @@
     "format": "prettier --write . && eslint --fix",
     "check": "prettier --check .",
     "cf:typegen": "wrangler types",
-    "cf:d1:migrate:local": "wrangler d1 migrations apply token-usage-analytics --local",
-    "cf:d1:migrate:remote": "wrangler d1 migrations apply token-usage-analytics --remote",
+    "cf:d1:migrate:local": "wrangler d1 migrations apply token_analytics --local",
+    "cf:d1:migrate:remote": "wrangler d1 migrations apply token_analytics --remote",
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {

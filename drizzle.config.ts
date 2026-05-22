@@ -8,6 +8,6 @@ export default defineConfig({
   schema: './src/db/schema.ts',
   dialect: 'sqlite',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? './.wrangler/state/v3/d1/miniflare-D1DatabaseObject/token-usage-analytics.sqlite',
+    url: process.env.DATABASE_URL ?? './.wrangler/state/v3/d1/miniflare-D1DatabaseObject/token_analytics.sqlite',
   },
 })

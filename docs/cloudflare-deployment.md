@@ -20,7 +20,7 @@ npx wrangler whoami
 ## 3. Create the D1 database
 
 ```bash
-npx wrangler d1 create token-usage-analytics
+npx wrangler d1 create token_analytics
 ```
 
 Copy the emitted `database_id` into `wrangler.jsonc` under `d1_databases[0].database_id`.
