@@ -77,4 +77,14 @@ Before that, create the D1 database, paste the real `database_id` into `wrangler
 
 ## GitHub board
 
-The project board URL will live here once created.
+Project board: https://github.com/orgs/Tevpro/projects/32
+
+Recommended execution order:
+1. #3 Ingestion contract
+2. #4 Daily rollups and backfill logic
+3. #10 Cloudflare D1 bootstrap and deploy config
+4. #5 Live D1 dashboard queries
+5. #6 Drilldowns and persistent filters
+6. #7 Issue detection and guardrails
+7. #9 Hardening and CI
+8. #8 Auth and workspace scoping, if needed
