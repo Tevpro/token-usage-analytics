@@ -65,7 +65,13 @@ npm run cf:d1:migrate:remote
 npm run deploy
 ```
 
-Before that, create the D1 database, paste the real `database_id` into `wrangler.jsonc`, and follow `docs/cloudflare-deployment.md`.
+Before that, create the D1 database, paste the real `database_id` into `wrangler.jsonc`, and follow:
+- `docs/cloudflare-deployment.md`
+- `docs/github-actions.md`
+
+GitHub Actions deployment is wired for automatic deploys from `main` after you add the required repository secrets:
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
 
 ## Next build slices
 
