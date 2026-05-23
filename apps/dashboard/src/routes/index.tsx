@@ -62,7 +62,7 @@ function Home() {
                 <h1 className="dashboard-title">OpenAI usage</h1>
                 <p className="max-w-3xl text-sm text-slate-600">{snapshot.headline.summary}</p>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="dashboard-header-actions">
                 <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
                   <Activity className="mr-1 size-3.5" />
                   {snapshot.headline.sourceLabel}
@@ -93,9 +93,9 @@ function Home() {
 
           <Tabs defaultValue="overview" className="w-full">
             <TabsList className="dashboard-tabs-list">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="models">Models</TabsTrigger>
-              <TabsTrigger value="cost">Cost</TabsTrigger>
+              <TabsTrigger className="dashboard-tab-trigger" value="overview">Overview</TabsTrigger>
+              <TabsTrigger className="dashboard-tab-trigger" value="models">Models</TabsTrigger>
+              <TabsTrigger className="dashboard-tab-trigger" value="cost">Cost</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -164,7 +164,7 @@ function Home() {
           <LineChart data={snapshot.charts.inputOutput} title="Input and output tokens" />
         </ChartCard>
 
-        <Card className="panel-card">
+        <Card className="panel-card panel-card-signals">
           <CardHeader className="panel-header-row">
             <div>
               <CardTitle className="panel-title">Signals</CardTitle>
@@ -244,7 +244,7 @@ function Home() {
         ))}
       </section>
 
-      <Card className="panel-card overflow-hidden">
+      <Card className="panel-card overflow-hidden daily-rollups-card">
         <CardHeader className="panel-header-row">
           <div>
             <CardTitle className="panel-title">Daily rollups</CardTitle>
@@ -252,35 +252,40 @@ function Home() {
               One row per day from OpenAI organization usage, cached into D1 for fast reads on Workers.
             </p>
           </div>
-          <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
+          <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
             <Activity className="mr-1 size-3.5" />
             {snapshot.headline.generatedAt.slice(0, 10)} sync basis
           </Badge>
         </CardHeader>
         <CardContent className="p-0">
-          <Table>
+          <Table className="daily-rollups-table">
             <TableHeader>
               <TableRow>
-                <TableHead>Trace ID</TableHead>
+                <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
                 <TableHead>Day</TableHead>
                 <TableHead className="text-right">Requests</TableHead>
                 <TableHead className="text-right">Total Tokens</TableHead>
-                <TableHead className="text-right">Input</TableHead>
-                <TableHead className="text-right">Output</TableHead>
-                <TableHead className="text-right">Cached %</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Input</TableHead>
+                <TableHead className="hidden lg:table-cell text-right">Output</TableHead>
+                <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
                 <TableHead className="text-right">Cost</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {snapshot.table.map((row) => (
                 <TableRow key={row.traceId}>
-                  <TableCell className="font-medium text-indigo-700">{row.traceId}</TableCell>
-                  <TableCell>{formatDay(row.day)}</TableCell>
+                  <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
+                  <TableCell>
+                    <div className="flex flex-col gap-1">
+                      <span>{formatDay(row.day)}</span>
+                      <span className="text-xs text-slate-500 sm:hidden">{row.traceId}</span>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
                   <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
-                  <TableCell className="text-right">{formatCompact(row.inputTokens)}</TableCell>
-                  <TableCell className="text-right">{formatCompact(row.outputTokens)}</TableCell>
-                  <TableCell className="text-right">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
+                  <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.inputTokens)}</TableCell>
+                  <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.outputTokens)}</TableCell>
+                  <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
                   <TableCell className="text-right">${row.cost.toFixed(2)}</TableCell>
                 </TableRow>
               ))}
