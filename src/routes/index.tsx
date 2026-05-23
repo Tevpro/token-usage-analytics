@@ -1,8 +1,7 @@
-import { useState, useTransition } from 'react'
 import type { ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
-import { createServerFn, useServerFn } from '@tanstack/react-start'
+import { createServerFn } from '@tanstack/react-start'
 import {
   Activity,
   ArrowUpRight,
@@ -27,17 +26,12 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
-import { loadDashboardSnapshotForRequest, syncOpenAiUsageToD1 } from '#/lib/openai-usage'
+import { loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
 
 const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
   const { getRuntimeEnv } = await import('#/lib/worker-env')
   const result = await loadDashboardSnapshotForRequest(getRuntimeEnv())
   return result.snapshot
-})
-
-const syncDashboardSnapshot = createServerFn({ method: 'POST' }).handler(async () => {
-  const { getRuntimeEnv } = await import('#/lib/worker-env')
-  return syncOpenAiUsageToD1(getRuntimeEnv())
 })
 
 export const Route = createFileRoute('/')({
@@ -47,9 +41,6 @@ export const Route = createFileRoute('/')({
 
 function Home() {
   const snapshot = Route.useLoaderData()
-  const syncNow = useServerFn(syncDashboardSnapshot)
-  const [isPending, startTransition] = useTransition()
-  const [syncError, setSyncError] = useState<string | null>(null)
 
   return (
     <main className="dashboard-shell">
@@ -59,7 +50,7 @@ function Home() {
             <p className="dashboard-kicker">Token observability</p>
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <h1 className="dashboard-title">OpenAI usage</h1>
+                <h1 className="dashboard-title">Token usage</h1>
                 <p className="max-w-3xl text-sm text-slate-600">{snapshot.headline.summary}</p>
               </div>
               <div className="flex items-center gap-3">
@@ -67,28 +58,12 @@ function Home() {
                   <Activity className="mr-1 size-3.5" />
                   {snapshot.headline.sourceLabel}
                 </Badge>
-                <Button
-                  className="dashboard-feedback-button"
-                  disabled={isPending}
-                  onClick={() => {
-                    setSyncError(null)
-                    startTransition(async () => {
-                      try {
-                        await syncNow()
-                        window.location.reload()
-                      } catch (error) {
-                        setSyncError(error instanceof Error ? error.message : String(error))
-                      }
-                    })
-                  }}
-                  variant="outline"
-                >
-                  <RefreshCcw className={`size-4 ${isPending ? 'animate-spin' : ''}`} />
-                  {isPending ? 'Syncing…' : 'Sync OpenAI'}
+                <Button className="dashboard-feedback-button" onClick={() => window.location.reload()} variant="outline">
+                  <RefreshCcw className="size-4" />
+                  Refresh view
                 </Button>
               </div>
             </div>
-            {syncError ? <p className="text-sm text-rose-600">{syncError}</p> : null}
           </div>
 
           <Tabs defaultValue="overview" className="w-full">
@@ -249,12 +224,12 @@ function Home() {
           <div>
             <CardTitle className="panel-title">Daily rollups</CardTitle>
             <p className="mt-1 text-sm text-slate-500">
-              One row per day from OpenAI organization usage, cached into D1 for fast reads on Workers.
+              Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.
             </p>
           </div>
           <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
             <Activity className="mr-1 size-3.5" />
-            {snapshot.headline.generatedAt.slice(0, 10)} sync basis
+            {snapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
           </Badge>
         </CardHeader>
         <CardContent className="p-0">
@@ -293,12 +268,12 @@ function Home() {
         <div>
           <p className="dashboard-kicker">Operating note</p>
           <h2 className="text-xl font-semibold text-slate-950">
-            OpenAI is now the source of truth, Cloudflare D1 is the read model, and the browser stays out of the secrets business.
+            Cloudflare D1 is the read model, the upstream collector can run on a cron, and the browser stays out of the secrets business.
           </h2>
         </div>
         <div className="flex items-center gap-3 text-sm text-slate-500">
           <Activity className="size-4" />
-          Manual sync is available now, and this can be moved to a scheduled refresh next.
+          Scheduled ingestion keeps the rollups fresh, and this view simply reloads the latest D1 snapshot.
         </div>
       </section>
     </main>

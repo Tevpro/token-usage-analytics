@@ -10,33 +10,43 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiIngestHermesUsageRouteImport } from './routes/api/ingest/hermes-usage'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiIngestHermesUsageRoute = ApiIngestHermesUsageRouteImport.update({
+  id: '/api/ingest/hermes-usage',
+  path: '/api/ingest/hermes-usage',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/ingest/hermes-usage': typeof ApiIngestHermesUsageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/ingest/hermes-usage': typeof ApiIngestHermesUsageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/ingest/hermes-usage': typeof ApiIngestHermesUsageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths: '/' | '/api/ingest/hermes-usage'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to: '/' | '/api/ingest/hermes-usage'
+  id: '__root__' | '/' | '/api/ingest/hermes-usage'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiIngestHermesUsageRoute: typeof ApiIngestHermesUsageRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +58,19 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/ingest/hermes-usage': {
+      id: '/api/ingest/hermes-usage'
+      path: '/api/ingest/hermes-usage'
+      fullPath: '/api/ingest/hermes-usage'
+      preLoaderRoute: typeof ApiIngestHermesUsageRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiIngestHermesUsageRoute: ApiIngestHermesUsageRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
