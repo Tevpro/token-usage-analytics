@@ -2,6 +2,10 @@
 
 This repo is an internal token-usage analytics app built with TanStack Start and deployed on Cloudflare Workers. It now supports pulling real OpenAI organization usage and cost data into Cloudflare D1, then serving the dashboard from D1 for cheap, fast reads.
 
+For Hermes ingestion operations, the canonical operator guide is:
+
+- `docs/hermes-token-analytics-plugin.md`
+
 ## What is in here
 
 - TanStack Start app scaffolded for Cloudflare Workers
@@ -13,6 +17,8 @@ This repo is an internal token-usage analytics app built with TanStack Start and
   - `docs/implementation-plan.md`
   - `docs/ai-build-prompts.md`
   - `docs/cloudflare-deployment.md`
+  - `docs/hermes-token-analytics-plugin.md`
+  - `docs/hermes-sidecar-sync.md` (migration pointer to the plugin doc)
 
 ## Product direction
 
