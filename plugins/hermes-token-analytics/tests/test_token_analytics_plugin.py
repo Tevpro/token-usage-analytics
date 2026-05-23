@@ -1,17 +1,43 @@
 from __future__ import annotations
 
+import importlib.util
 import sqlite3
+import sys
 from pathlib import Path
 
-from plugins.observability.token_analytics import register
-from plugins.observability.token_analytics.cli import (
-    TokenAnalyticsConfig,
-    build_payload,
-    diagnose_config,
-    install_cron_wrapper,
-    post_payload,
-    render_config_snapshot,
-)
+
+def _load_plugin_modules():
+    repo_root = Path(__file__).resolve().parents[3]
+    plugin_dir = repo_root / "plugins" / "hermes-token-analytics"
+    package_name = "token_analytics_plugin"
+
+    sys.modules.pop(package_name, None)
+    sys.modules.pop(f"{package_name}.cli", None)
+
+    spec = importlib.util.spec_from_file_location(
+        package_name,
+        plugin_dir / "__init__.py",
+        submodule_search_locations=[str(plugin_dir)],
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Failed to load plugin package from {plugin_dir}")
+
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[package_name] = module
+    spec.loader.exec_module(module)
+
+    cli_module = sys.modules[f"{package_name}.cli"]
+    return module, cli_module
+
+
+_plugin, _cli = _load_plugin_modules()
+register = _plugin.register
+TokenAnalyticsConfig = _cli.TokenAnalyticsConfig
+build_payload = _cli.build_payload
+diagnose_config = _cli.diagnose_config
+install_cron_wrapper = _cli.install_cron_wrapper
+post_payload = _cli.post_payload
+render_config_snapshot = _cli.render_config_snapshot
 
 
 def _make_db(path: Path) -> None:
@@ -201,7 +227,7 @@ def test_post_payload_sends_cloudflare_friendly_headers(tmp_path, monkeypatch):
         seen["accept"] = request.get_header("Accept")
         return _Response()
 
-    monkeypatch.setattr("plugins.observability.token_analytics.cli.urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(_cli.urllib.request, "urlopen", _fake_urlopen)
 
     response = post_payload(config, payload)
 

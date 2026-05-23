@@ -25,7 +25,7 @@ jobs:
             dashboard:
               - 'apps/dashboard/**'
             plugin:
-              - 'hermes-token-analytics-plugin/**'
+              - 'plugins/hermes-token-analytics/**'
             shared:
               - '.github/workflows/ci.yml'
 
@@ -78,6 +78,4 @@ jobs:
         run: python -m pip install --upgrade pip pytest
 
       - name: Run plugin tests
-        env:
-          PYTHONPATH: hermes-token-analytics-plugin
-        run: python -m pytest hermes-token-analytics-plugin/tests -q
+        run: python -m pytest plugins/hermes-token-analytics/tests -q
