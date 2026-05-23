@@ -24,13 +24,13 @@ That avoids the old split-brain setup where the product repo and the Hermes impl
 Run from repo root:
 
 ```bash
-PYTHONPATH=integrations/hermes-token-analytics-plugin python3 -m pytest integrations/hermes-token-analytics-plugin/tests -q
+PYTHONPATH=hermes-token-analytics-plugin python3 -m pytest hermes-token-analytics-plugin/tests -q
 ```
 
 ## Local install helper
 
 ```bash
-integrations/hermes-token-analytics-plugin/scripts/install-local-plugin.sh /path/to/hermes-agent
+hermes-token-analytics-plugin/scripts/install-local-plugin.sh /path/to/hermes-agent
 ```
 
 Default target if no argument is passed:

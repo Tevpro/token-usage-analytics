@@ -38,6 +38,7 @@ DEFAULT_WORKSPACE_NAME = "Hermes Usage"
 DEFAULT_WORKSPACE_SLUG = "hermes-usage"
 DEFAULT_SOURCE_LABEL = "Hermes token analytics plugin"
 DEFAULT_ENDPOINT_PATH = "/api/ingest/hermes-usage"
+DEFAULT_USER_AGENT = "hermes-token-analytics/1.0"
 
 
 @dataclass
@@ -461,6 +462,8 @@ def post_payload(config: TokenAnalyticsConfig, payload: dict[str, Any]) -> dict[
         headers={
             "Authorization": f"Bearer {config.token}",
             "Content-Type": "application/json",
+            "User-Agent": DEFAULT_USER_AGENT,
+            "Accept": "application/json",
         },
         method="POST",
     )

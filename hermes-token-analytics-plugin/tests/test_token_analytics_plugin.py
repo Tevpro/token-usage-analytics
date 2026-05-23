@@ -9,6 +9,7 @@ from plugins.observability.token_analytics.cli import (
     build_payload,
     diagnose_config,
     install_cron_wrapper,
+    post_payload,
     render_config_snapshot,
 )
 
@@ -170,3 +171,43 @@ def test_install_cron_wrapper_writes_executable_script(tmp_path):
         "exec hermes token-analytics sync \"$@\"\n"
     )
     assert wrapper.stat().st_mode & 0o111
+
+
+def test_post_payload_sends_cloudflare_friendly_headers(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_db(db_path)
+    config = _config(db_path)
+    payload = {"rollups": [{"usageDate": "2026-01-01", "requests": 1, "inputTokens": 1, "outputTokens": 1}]}
+
+    seen: dict[str, str] = {}
+
+    class _Response:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b'{"ok": true}'
+
+    def _fake_urlopen(request, timeout):
+        seen["timeout"] = str(timeout)
+        seen["authorization"] = request.get_header("Authorization")
+        seen["content_type"] = request.get_header("Content-type")
+        seen["user_agent"] = request.get_header("User-agent")
+        seen["accept"] = request.get_header("Accept")
+        return _Response()
+
+    monkeypatch.setattr("plugins.observability.token_analytics.cli.urllib.request.urlopen", _fake_urlopen)
+
+    response = post_payload(config, payload)
+
+    assert response == {"ok": True}
+    assert seen["timeout"] == "1.0"
+    assert seen["authorization"] == "Bearer secret-token-value"
+    assert seen["content_type"] == "application/json"
+    assert seen["user_agent"] == "hermes-token-analytics/1.0"
+    assert seen["accept"] == "application/json"

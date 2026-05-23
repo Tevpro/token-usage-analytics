@@ -33,7 +33,7 @@ The token analytics integration exports Hermes usage rollups from `~/.hermes/sta
 - destination: `POST /api/ingest/hermes-usage`
 - dashboard storage: Cloudflare D1
 
-This repo is the dashboard and ingest target. The operator-facing runtime is the Hermes plugin command surface, and the source-of-truth plugin files now live in this monorepo under `integrations/hermes-token-analytics-plugin/`:
+This repo is the dashboard and ingest target. The operator-facing runtime is the Hermes plugin command surface, and the source-of-truth plugin files now live in this monorepo under `hermes-token-analytics-plugin/`:
 
 - `hermes token-analytics doctor`
 - `hermes token-analytics show-config`
