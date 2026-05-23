@@ -6,7 +6,7 @@ This monorepo uses path-aware GitHub Actions:
 
 1. `CI` detects what changed.
 2. Dashboard changes run Node validation from `apps/dashboard/`.
-3. Hermes plugin changes run Python validation from `hermes-token-analytics-plugin/`.
+3. Hermes plugin changes run Python validation from `plugins/hermes-token-analytics/`.
 4. Cloudflare preview and production deploys only run when dashboard/deploy paths change.
 
 ## Workflow files
@@ -43,14 +43,13 @@ Validation steps:
 
 Runs when files under these paths change:
 
-- `hermes-token-analytics-plugin/**`
+- `plugins/hermes-token-analytics/**`
 - `.github/workflows/ci.yml`
 
 Validation steps:
 
-1. set `PYTHONPATH=hermes-token-analytics-plugin`
-2. install `pytest`
-3. run plugin tests from `hermes-token-analytics-plugin/tests/`
+1. install `pytest`
+2. run plugin tests from `plugins/hermes-token-analytics/tests/`
 
 ## Preview deploy behavior
 

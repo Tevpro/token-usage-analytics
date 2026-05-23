@@ -3,7 +3,7 @@
 This repo is now a small monorepo:
 
 - `apps/dashboard/` — the Cloudflare Workers + D1 analytics app
-- `hermes-token-analytics-plugin/` — the Hermes-native plugin source that exports `state.db` rollups into the dashboard ingest endpoint
+- `plugins/hermes-token-analytics/` — the Hermes-native plugin source that exports `state.db` rollups into the dashboard ingest endpoint
 - `docs/` — shared operator and deployment documentation
 
 The goal is simple: keep the dashboard, ingest contract, plugin source, and operational docs in one place instead of splitting the truth across repos.
@@ -41,7 +41,8 @@ The target UX is a dense, operator-facing analytics surface, not a marketing das
 ```text
 apps/
   dashboard/
-hermes-token-analytics-plugin/
+plugins/
+  hermes-token-analytics/
 docs/
 .github/workflows/
 ```
@@ -65,13 +66,14 @@ npm run deploy
 
 The Hermes plugin source lives at:
 
-- `hermes-token-analytics-plugin/plugins/observability/token_analytics/`
+- `plugins/hermes-token-analytics/`
 
 Supporting files:
 
-- install helper: `hermes-token-analytics-plugin/scripts/install-local-plugin.sh`
-- tests: `hermes-token-analytics-plugin/tests/`
+- install helper: `plugins/hermes-token-analytics/scripts/install-local-plugin.sh`
+- tests: `plugins/hermes-token-analytics/tests/`
 - operator guide: `docs/hermes-token-analytics-plugin.md`
+- install helper also writes a legacy shim for `plugins/observability/token_analytics` in target Hermes checkouts
 
 ## CI / deploy model
 

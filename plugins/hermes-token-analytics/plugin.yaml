@@ -1,4 +1,4 @@
-name: token_analytics
+name: hermes-token-analytics
 version: "0.1.0"
 description: "Hermes token usage analytics sync plugin. Adds `hermes token-analytics` commands for config inspection, validation, and exporting `state.db` rollups to an ingest endpoint."
 author: NousResearch
