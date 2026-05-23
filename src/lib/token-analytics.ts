@@ -18,6 +18,7 @@ type SnapshotBuildInput = {
   models: Array<{
     cost: number
     model: string
+    provider?: string
     requests: number
     tokens: number
   }>
@@ -53,10 +54,11 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const modelRows = input.models.map((model, index) => ({
     ...model,
     color: MODEL_COLORS[index % MODEL_COLORS.length],
-    provider: 'OpenAI',
+    provider: model.provider || 'Unknown',
   }))
   const topModel = modelRows.at(0)
-  const topDay = [...input.dailyRows].sort((left, right) => right.cost - left.cost).at(0)
+  const topDayByTokens = [...input.dailyRows].sort((left, right) => right.totalTokens - left.totalTokens).at(0)
+  const topDayByCost = [...input.dailyRows].sort((left, right) => right.cost - left.cost).at(0)
 
   return {
     headline: {
@@ -66,7 +68,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       sourceLabel: input.sourceLabel,
       summary:
         input.statusNote ||
-        'Daily OpenAI organization usage rolled into Cloudflare D1 for fast dashboard queries on Workers.',
+        'Usage rollups are cached in Cloudflare D1 so the dashboard can read quickly on Workers without reaching back into the source system.',
       workspace: input.workspaceName,
     },
     kpis: [
@@ -76,12 +78,12 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         value: formatCompactNumber(totals.totalTokens),
       },
       {
-        label: 'Actual Cost',
+        label: 'Tracked Cost',
         tone: totals.cost > 0 ? 'warning' : 'neutral',
         value: `$${totals.cost.toFixed(2)}`,
       },
       {
-        label: 'Requests',
+        label: 'API Calls',
         tone: 'neutral',
         value: totals.requests.toLocaleString('en-US'),
       },
@@ -121,7 +123,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
             {
               count: 0,
               severity: 'low',
-              title: 'No anomalies detected in the current OpenAI window.',
+              title: 'No anomalies detected in the current reporting window.',
             },
           ],
     table: input.dailyRows.map((row) => ({
@@ -137,11 +139,13 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     callouts: [
       topModel
         ? `${topModel.model} drove the most volume with ${formatCompactNumber(topModel.tokens)} tokens across the selected window.`
-        : 'No model-level usage returned from OpenAI for this window.',
-      topDay
-        ? `${formatDay(topDay.day)} was the highest-cost day at $${topDay.cost.toFixed(2)}.`
-        : 'No daily cost data returned from OpenAI for this window.',
-      `Source label: ${input.sourceLabel}.`,
+        : 'No model-level usage was returned for this window.',
+      topDayByTokens
+        ? `${formatDay(topDayByTokens.day)} was the busiest day at ${formatCompactNumber(topDayByTokens.totalTokens)} total tokens.`
+        : 'No daily token data was returned for this window.',
+      topDayByCost && topDayByCost.cost > 0
+        ? `${formatDay(topDayByCost.day)} carried the highest tracked cost at $${topDayByCost.cost.toFixed(2)}.`
+        : `Source label: ${input.sourceLabel}.`,
     ],
   }
 }
@@ -154,12 +158,12 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       rangeLabel: 'Last 14 days',
       sourceLabel: 'Fallback sample data',
       summary: reason,
-      workspace: 'OpenAI Organization',
+      workspace: 'Token Usage Workspace',
     },
     kpis: [
       { label: 'Total Tokens', tone: 'neutral', value: '0' },
-      { label: 'Actual Cost', tone: 'neutral', value: '$0.00' },
-      { label: 'Requests', tone: 'neutral', value: '0' },
+      { label: 'Tracked Cost', tone: 'neutral', value: '$0.00' },
+      { label: 'API Calls', tone: 'neutral', value: '0' },
       { label: 'Cached Input Share', tone: 'warning', value: '0.0%' },
     ],
     charts: {
@@ -173,8 +177,8 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
         secondary: 28000 + index * 3500,
       })),
       models: [
-        { color: MODEL_COLORS[0], cost: 0, model: 'gpt-4.1', provider: 'OpenAI', requests: 0, tokens: 0 },
-        { color: MODEL_COLORS[1], cost: 0, model: 'gpt-4o-mini', provider: 'OpenAI', requests: 0, tokens: 0 },
+        { color: MODEL_COLORS[0], cost: 0, model: 'gpt-5.4', provider: 'Hermes', requests: 0, tokens: 0 },
+        { color: MODEL_COLORS[1], cost: 0, model: 'claude-sonnet', provider: 'Hermes', requests: 0, tokens: 0 },
       ],
       requestsCostCache: fallbackDays.map((day, index) => ({
         day,
@@ -192,7 +196,7 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       {
         count: 1,
         severity: 'medium',
-        title: 'Set OPENAI_API_KEY in Cloudflare Workers, then run a sync to replace sample data.',
+        title: 'Wire a real ingestion source, then let the Worker read D1 instead of sample data.',
       },
     ],
     table: fallbackDays.map((day, index) => ({
@@ -206,9 +210,9 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       traceId: day.replaceAll('-', '').slice(2),
     })),
     callouts: [
-      'This fallback keeps the UI legible while real credentials are wired.',
-      'Once OPENAI_API_KEY exists in the Worker runtime, the dashboard can sync OpenAI organization usage into D1.',
-      'Real OpenAI usage data does not include everything from the original mock, so the dashboard now emphasizes requests, tokens, cache share, models, and cost.',
+      'This fallback keeps the UI legible while the live ingestion path is being wired.',
+      'Once the Worker starts receiving rollups, the dashboard will read D1 instead of sample data.',
+      'The dashboard emphasizes tokens, requests, cache share, models, and tracked cost over decorative metrics.',
     ],
   }
 }
