@@ -8,6 +8,34 @@ This repo is now a small monorepo:
 
 The goal is simple: keep the dashboard, ingest contract, plugin source, and operational docs in one place instead of splitting the truth across repos.
 
+For Hermes ingestion operations, the canonical operator guide is:
+
+- `docs/hermes-token-analytics-plugin.md`
+
+## What is in here
+
+- TanStack Start app scaffolded for Cloudflare Workers
+- Dashboard shell for daily token, cost, request, latency, model, and tool analytics
+- D1 schema for workspaces, daily rollups, model usage, tool usage, and issue events
+- Initial migration for local and remote D1 environments
+- Product docs:
+  - `docs/requirements.md`
+  - `docs/implementation-plan.md`
+  - `docs/ai-build-prompts.md`
+  - `docs/cloudflare-deployment.md`
+  - `docs/hermes-token-analytics-plugin.md`
+  - `docs/hermes-sidecar-sync.md` (migration pointer to the plugin doc)
+
+## Product direction
+
+The target UX is a dense, operator-facing analytics surface, not a marketing dashboard. The visual reference we preserved:
+
+- crisp header with lightweight tabs
+- compact control bar for workspace, environment, and date range
+- six dense panels with low-friction chart scanning
+- issue list beside metrics, so anomalies are visible without leaving the page
+- operational table at the bottom for trace-level or day-level inspection
+
 ## Repo layout
 
 ```text
