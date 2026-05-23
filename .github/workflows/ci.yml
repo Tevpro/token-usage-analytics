@@ -7,10 +7,36 @@ on:
       - main
 
 jobs:
-  validate:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      dashboard: ${{ steps.filter.outputs.dashboard }}
+      plugin: ${{ steps.filter.outputs.plugin }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect changed areas
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            dashboard:
+              - 'apps/dashboard/**'
+            plugin:
+              - 'hermes-token-analytics-plugin/**'
+            shared:
+              - '.github/workflows/ci.yml'
+
+  dashboard-validate:
+    needs: changes
+    if: needs.changes.outputs.dashboard == 'true' || needs.changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-
+    defaults:
+      run:
+        working-directory: apps/dashboard
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -20,6 +46,7 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: apps/dashboard/package-lock.json
 
       - name: Install dependencies
         run: npm ci
@@ -32,3 +59,25 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  plugin-validate:
+    needs: changes
+    if: needs.changes.outputs.plugin == 'true' || needs.changes.outputs.shared == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test runner
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Run plugin tests
+        env:
+          PYTHONPATH: hermes-token-analytics-plugin
+        run: python -m pytest hermes-token-analytics-plugin/tests -q

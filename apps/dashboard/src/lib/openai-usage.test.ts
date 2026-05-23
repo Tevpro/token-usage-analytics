@@ -11,8 +11,8 @@ type BoundStatement = {
 class FakePreparedStatement {
   constructor(
     private readonly db: FakeD1Database,
-    private readonly sql: string,
-    private params: unknown[] = [],
+    readonly sql: string,
+    readonly params: unknown[] = [],
   ) {}
 
   bind(...params: unknown[]) {
@@ -35,8 +35,8 @@ class FakeD1Database {
 
   async batch(statements: FakePreparedStatement[]) {
     const batch = statements.map((statement) => ({
-      params: statement['params'] as unknown[],
-      sql: statement['sql'] as string,
+      params: statement.params,
+      sql: statement.sql,
     }))
     this.batches.push(batch)
     return []
@@ -74,7 +74,7 @@ describe('ingestExternalRollupsToD1', () => {
           usageDate: '2026-05-22',
         },
       ],
-      sourceLabel: 'Hermes state.db sidecar',
+      sourceLabel: 'Hermes plugin sync',
       workspace: {
         name: 'Hermes Usage',
         provider: 'Hermes',
@@ -84,7 +84,7 @@ describe('ingestExternalRollupsToD1', () => {
 
     expect(result).toEqual({
       rowsWritten: 1,
-      sourceLabel: 'Hermes state.db sidecar',
+      sourceLabel: 'Hermes plugin sync',
       syncedAt: '2026-05-23T12:00:00.000Z',
     })
 

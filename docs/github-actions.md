@@ -1,85 +1,116 @@
-# GitHub Actions and Cloudflare Deployment
+# GitHub Actions and Cloudflare deployment
 
 ## TL;DR
 
-This repo uses two GitHub Actions workflows:
+This monorepo uses path-aware GitHub Actions:
 
-1. `CI` runs `typecheck`, `lint`, and `build` on pull requests and pushes to `main`.
-2. `Deploy to Cloudflare` runs on pushes to `main` and manual dispatch. It applies remote D1 migrations, then deploys the Worker.
+1. `CI` detects what changed.
+2. Dashboard changes run Node validation from `apps/dashboard/`.
+3. Hermes plugin changes run Python validation from `hermes-token-analytics-plugin/`.
+4. Cloudflare preview and production deploys only run when dashboard/deploy paths change.
 
 ## Workflow files
 
 - `.github/workflows/ci.yml`
+- `.github/workflows/preview-deploy.yml`
 - `.github/workflows/deploy.yml`
+
+## Dashboard app location
+
+The Cloudflare app now lives under:
+
+- `apps/dashboard/`
+
+That means Actions commands run there, not from repo root.
+
+## CI behavior
+
+### Dashboard validation
+
+Runs when files under these paths change:
+
+- `apps/dashboard/**`
+- `.github/workflows/ci.yml`
+
+Validation steps:
+
+1. `npm ci`
+2. `npm run typecheck`
+3. `npm run lint`
+4. `npm run build`
+
+### Hermes plugin validation
+
+Runs when files under these paths change:
+
+- `hermes-token-analytics-plugin/**`
+- `.github/workflows/ci.yml`
+
+Validation steps:
+
+1. set `PYTHONPATH=hermes-token-analytics-plugin`
+2. install `pytest`
+3. run plugin tests from `hermes-token-analytics-plugin/tests/`
+
+## Preview deploy behavior
+
+`preview-deploy.yml` only runs for dashboard/deploy-path pull request changes.
+
+It:
+
+1. installs dashboard dependencies in `apps/dashboard/`
+2. builds the app
+3. deploys a PR-specific Cloudflare Worker preview
+
+## Production deploy behavior
+
+`deploy.yml` runs on pushes to `main` for dashboard/deploy-path changes and on manual dispatch.
+
+It:
+
+1. installs dashboard dependencies in `apps/dashboard/`
+2. builds the app
+3. applies remote D1 migrations
+4. deploys the Worker
+
+Schema first, code second.
 
 ## Required GitHub repository secrets
 
-Add these in **GitHub → Repo → Settings → Secrets and variables → Actions**:
+Add these in GitHub repo settings:
 
-### `CLOUDFLARE_API_TOKEN`
-Use a Cloudflare API token with permission to:
-- deploy Workers
-- manage D1 migrations for this app
-
-At minimum, the token should be able to operate on the target account's Workers and D1 resources.
-
-### `CLOUDFLARE_ACCOUNT_ID`
-The Cloudflare account ID that owns the Worker and D1 database.
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
 
 ## Required repo config before deploy works
 
-### 1. Real D1 database ID in `wrangler.jsonc`
-This repo still ships with a placeholder:
+### 1. Correct D1 database binding in `apps/dashboard/wrangler.jsonc`
 
-```json
-"database_id": "YOUR_D1_DATABASE_ID"
-```
-
-Replace it with the real ID from:
-
-```bash
-npx wrangler d1 create token_analytics
-```
+The deploy workflows use the Wrangler config under `apps/dashboard/`.
+Make sure the committed D1 binding points at the real target database for this environment.
 
 ### 2. Wrangler auth must work with the token
-The deploy workflow uses environment-based auth through GitHub secrets. If the token is wrong or underscoped, deployment will fail before or during migration apply.
 
-## Deploy behavior
-
-On every push to `main`, the deploy workflow will:
-
-1. install dependencies
-2. build the app
-3. run remote D1 migrations
-4. deploy the Worker
-
-That order is deliberate. Schema drift first, code second.
-
-## Recommended operating pattern
-
-- open PRs for changes
-- let `CI` validate them
-- merge to `main`
-- let `Deploy to Cloudflare` publish automatically
+If the token is missing, invalid, or underscoped, preview and production deploys will fail during migration or deploy.
 
 ## Common failure modes
 
+### Preview or deploy ran on the wrong changes
+Check the workflow path filters first.
+
 ### `CLOUDFLARE_API_TOKEN` missing or invalid
-The workflow will fail when `wrangler` tries to apply migrations or deploy.
+Wrangler will fail during migration apply or deploy.
 
 ### `CLOUDFLARE_ACCOUNT_ID` missing
 Wrangler may fail to resolve the target account.
 
-### placeholder `database_id`
-Remote D1 migration apply will fail immediately.
+### Wrong `database_id` in `apps/dashboard/wrangler.jsonc`
+Remote D1 migration apply will fail or target the wrong database.
 
-### token lacks D1 or Workers permissions
+### Token lacks D1 or Workers permissions
 Deploy may partially fail or fail at the migration step.
 
-## Recommendation
+## Important GitHub auth pitfall
 
-Do not treat this as finished until:
-- the real D1 database exists
-- the real `database_id` is committed
-- both GitHub secrets are present
-- one successful deployment has run on `main`
+If a push updates `.github/workflows/*`, GitHub may reject it unless the token has workflow-update permission.
+That is an auth scope problem, not a YAML problem.

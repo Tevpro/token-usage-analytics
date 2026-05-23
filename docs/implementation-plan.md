@@ -1,6 +1,8 @@
 # Token Usage Analytics Implementation Plan
 
 > For Hermes: execute this in vertical slices, not as one giant swing.
+>
+> Monorepo note: the Cloudflare app now lives under `apps/dashboard/`, so any old path references like `src/...`, `migrations/...`, or `wrangler.jsonc` should be read as `apps/dashboard/src/...`, `apps/dashboard/migrations/...`, and `apps/dashboard/wrangler.jsonc`.
 
 ## Goal
 

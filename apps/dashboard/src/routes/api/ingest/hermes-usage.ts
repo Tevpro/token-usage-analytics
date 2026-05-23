@@ -26,7 +26,7 @@ export const Route = createFileRoute('/api/ingest/hermes-usage')({
         }
 
         try {
-          const payload = (await request.json()) as ExternalIngestPayload
+          const payload: ExternalIngestPayload = await request.json()
           const result = await ingestExternalRollupsToD1(env, payload)
           return Response.json(result, { status: 200 })
         } catch (error) {

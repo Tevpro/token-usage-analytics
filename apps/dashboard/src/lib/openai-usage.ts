@@ -71,12 +71,21 @@ type OpenAiCostResponse = {
 }
 
 type DayAccumulator = {
+  avgLatencyMs: number
   cachedTokens: number
   cost: number
   day: string
+  errorCount: number
   inputTokens: number
+  issues: Array<{
+    count: number
+    metadata?: Record<string, unknown>
+    severity: 'high' | 'medium' | 'low'
+    title: string
+  }>
   models: Map<string, { provider: string; requests: number; tokens: number; cost?: number }>
   outputTokens: number
+  p95LatencyMs: number
   requests: number
   totalTokens: number
 }
@@ -158,7 +167,7 @@ export async function loadDashboardSnapshotForRequest(env: CloudflareAppEnv): Pr
 
   return {
     snapshot: buildFallbackDashboardSnapshot(
-      'No D1 rollups are available yet. Configure the Hermes sidecar ingestion or wire the OpenAI fallback secret to replace sample data.',
+      'No D1 rollups are available yet. Configure the Hermes token analytics plugin ingestion or wire the OpenAI fallback secret to replace sample data.',
     ),
   }
 }
@@ -167,7 +176,7 @@ export async function ingestExternalRollupsToD1(
   env: CloudflareAppEnv,
   payload: ExternalIngestPayload,
 ): Promise<SyncResult> {
-  if (!payload.rollups?.length) {
+  if (payload.rollups.length === 0) {
     throw new Error('Ingest payload did not include any rollups.')
   }
 
@@ -216,19 +225,20 @@ export async function ingestExternalRollupsToD1(
         dayEntry.outputTokens,
         dayEntry.cachedTokens,
         roundCurrency(dayEntry.cost),
-        0,
-        0,
-        0,
+        dayEntry.errorCount,
+        Math.max(0, Math.round(dayEntry.avgLatencyMs)),
+        Math.max(0, Math.round(dayEntry.p95LatencyMs)),
         nowMs,
       ),
     )
 
     for (const [model, values] of [...dayEntry.models.entries()].sort((left, right) => right[1].tokens - left[1].tokens)) {
+      const modelId = `${rollupId}:${values.provider}:${model}`
       statements.push(
         env.DB.prepare(
           'INSERT INTO model_daily_usage (id, rollup_id, model, provider, requests, tokens, estimated_cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)',
         ).bind(
-          `${rollupId}:${model}`,
+          modelId,
           rollupId,
           model,
           values.provider,
@@ -245,7 +255,7 @@ export async function ingestExternalRollupsToD1(
 
   return {
     rowsWritten: dayEntries.length,
-    sourceLabel: payload.sourceLabel || `Live ${workspace.provider} data`,
+    sourceLabel: payload.sourceLabel || `Live ${workspace.provider} plugin data`,
     syncedAt: new Date(nowMs).toISOString(),
   }
 }
@@ -360,11 +370,12 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
     for (const [model, values] of [...dayEntry.models.entries()].sort((left, right) => right[1].tokens - left[1].tokens)) {
       const allocatedCost =
         dayEntry.totalTokens > 0 ? roundCurrency((dayEntry.cost * values.tokens) / dayEntry.totalTokens) : 0
+      const modelId = `${rollupId}:${values.provider}:${model}`
       statements.push(
         env.DB.prepare(
           'INSERT INTO model_daily_usage (id, rollup_id, model, provider, requests, tokens, estimated_cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)',
         ).bind(
-          `${rollupId}:${model}`,
+          modelId,
           rollupId,
           model,
           values.provider,
@@ -553,6 +564,25 @@ async function loadIssues(db: D1Database, workspaceId: string, startDay: string,
 function buildIssueStatements(db: D1Database, workspaceId: string, days: DayAccumulator[], nowMs: number) {
   const statements: D1PreparedStatement[] = []
 
+  for (const day of days) {
+    for (const [issueIndex, issue] of day.issues.entries()) {
+      statements.push(
+        db.prepare(
+          'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        ).bind(
+          `${workspaceId}:${day.day}:reported-${issueIndex}:${slugify(issue.title)}`,
+          workspaceId,
+          nowMs,
+          day.day,
+          issue.severity,
+          issue.title,
+          Math.max(0, issue.count),
+          issue.metadata ? JSON.stringify(issue.metadata) : null,
+        ),
+      )
+    }
+  }
+
   for (let index = 1; index < days.length; index += 1) {
     const previous = days[index - 1]
     const current = days[index]
@@ -685,21 +715,31 @@ function normalizeExternalRollup(
   const models = new Map<string, { provider: string; requests: number; tokens: number; cost?: number }>()
 
   for (const model of rollup.models || []) {
-    models.set(model.model, {
+    const provider = model.provider || defaultProvider
+    models.set(`${provider}:${model.model}`, {
       cost: model.estimatedCostUsd || 0,
-      provider: model.provider || defaultProvider,
+      provider,
       requests: Math.max(0, model.requests || 0),
       tokens: Math.max(0, model.tokens || 0),
     })
   }
 
   return {
+    avgLatencyMs: Math.max(0, rollup.avgLatencyMs || 0),
     cachedTokens,
     cost: Math.max(0, rollup.estimatedCostUsd || 0),
     day: rollup.usageDate,
+    errorCount: Math.max(0, rollup.errorCount || 0),
     inputTokens,
+    issues: (rollup.issues || []).map((issue) => ({
+      count: Math.max(0, issue.count || 0),
+      metadata: issue.metadata,
+      severity: issue.severity,
+      title: issue.title,
+    })),
     models,
     outputTokens,
+    p95LatencyMs: Math.max(0, rollup.p95LatencyMs || 0),
     requests,
     totalTokens,
   }
@@ -712,12 +752,16 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
   }
 
   const created: DayAccumulator = {
+    avgLatencyMs: 0,
     cachedTokens: 0,
     cost: 0,
     day,
+    errorCount: 0,
     inputTokens: 0,
+    issues: [],
     models: new Map(),
     outputTokens: 0,
+    p95LatencyMs: 0,
     requests: 0,
     totalTokens: 0,
   }
