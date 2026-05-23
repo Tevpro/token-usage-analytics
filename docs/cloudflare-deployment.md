@@ -1,13 +1,15 @@
-# Cloudflare Deployment
+# Cloudflare deployment
 
 ## TL;DR
 
-This app targets Cloudflare Workers with D1 as the analytics store. The only manual blocker is creating the real D1 database and pasting its `database_id` into `wrangler.jsonc`.
+The Cloudflare app now lives in `apps/dashboard/`.
+All app, Wrangler, and D1 commands should be run from that directory.
 
 ## 1. Install dependencies
 
 ```bash
-npm install
+cd apps/dashboard
+npm ci
 ```
 
 ## 2. Authenticate Wrangler
@@ -17,13 +19,13 @@ npx wrangler login
 npx wrangler whoami
 ```
 
-## 3. Create the D1 database
+## 3. Verify the D1 binding
 
-```bash
-npx wrangler d1 create token_analytics
-```
+Check:
 
-Copy the emitted `database_id` into `wrangler.jsonc` under `d1_databases[0].database_id`.
+- `apps/dashboard/wrangler.jsonc`
+
+Make sure the committed `d1_databases[0].database_id` is the right database for the environment you intend to deploy.
 
 ## 4. Generate types
 
@@ -57,7 +59,8 @@ npm run deploy
 
 ## 9. GitHub Actions deployment
 
-This repo now includes GitHub Actions workflows for CI and automatic deploys from `main`.
+The repo includes path-aware GitHub Actions workflows.
+Dashboard deploy flows only fire when dashboard/deploy paths change.
 
 Required repository secrets:
 
@@ -66,21 +69,9 @@ Required repository secrets:
 
 Deploy workflow behavior:
 
-1. install dependencies
+1. install dependencies in `apps/dashboard/`
 2. build the app
 3. apply remote D1 migrations
 4. deploy the Worker
 
-If the workflow fails, the usual causes are:
-- placeholder `database_id` still present in `wrangler.jsonc`
-- missing `CLOUDFLARE_API_TOKEN`
-- missing `CLOUDFLARE_ACCOUNT_ID`
-- Cloudflare token lacks Workers or D1 permissions
-
 See `docs/github-actions.md` for the exact GitHub setup.
-
-## Notes
-
-- The dashboard currently uses mock data for the UI shell.
-- The schema and migration structure are ready for live rollups.
-- When the ingestion path is implemented, prefer pre-aggregated daily tables for dashboard reads.
