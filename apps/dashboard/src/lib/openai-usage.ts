@@ -4,7 +4,11 @@ import type {
   DashboardModelDailyUsage,
   DashboardSnapshot,
 } from '#/lib/token-analytics'
-import { buildFallbackDashboardSnapshot, buildSnapshotFromRollups } from '#/lib/token-analytics'
+import {
+  buildFallbackDashboardSnapshot,
+  buildSnapshotFromRollups,
+  calculateCachedShare,
+} from '#/lib/token-analytics'
 
 type DailyRollupRow = {
   cachedTokens: number
@@ -674,7 +678,7 @@ function buildIssueStatements(db: D1Database, workspaceId: string, days: DayAccu
       )
     }
 
-    const cacheRate = current.inputTokens > 0 ? current.cachedTokens / current.inputTokens : 0
+    const cacheRate = calculateCachedShare(current)
     if (current.inputTokens > 0 && cacheRate < 0.05) {
       statements.push(
         db.prepare(
