@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
@@ -17,6 +17,7 @@ import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
 import { Separator } from '#/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#/components/ui/select'
 import {
   Table,
   TableBody,
@@ -26,7 +27,13 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
+import {
+  filterSnapshotByTimeframe,
+  type TimeframePreset,
+  type TimeframeSelection,
+} from '#/lib/dashboard-timeframe'
 import { loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
+import type { DashboardSnapshot } from '#/lib/token-analytics'
 
 const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
   const { getRuntimeEnv } = await import('#/lib/worker-env')
@@ -41,6 +48,8 @@ export const Route = createFileRoute('/')({
 
 function Home() {
   const snapshot = Route.useLoaderData()
+  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
+  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(snapshot, timeframe), [snapshot, timeframe])
 
   return (
     <main className="dashboard-shell">
@@ -51,12 +60,12 @@ function Home() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h1 className="dashboard-title">Token usage</h1>
-                <p className="max-w-3xl text-sm text-slate-600">{snapshot.headline.summary}</p>
+                <p className="max-w-3xl text-sm text-slate-600">{activeSnapshot.headline.summary}</p>
               </div>
               <div className="dashboard-header-actions">
                 <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
                   <Activity className="mr-1 size-3.5" />
-                  {snapshot.headline.sourceLabel}
+                  {activeSnapshot.headline.sourceLabel}
                 </Badge>
                 <Button className="dashboard-feedback-button" onClick={() => window.location.reload()} variant="outline">
                   <RefreshCcw className="size-4" />
@@ -80,16 +89,61 @@ function Home() {
         <div className="toolbar-chip-group">
           <button className="toolbar-chip" type="button">
             <Bot className="size-4" />
-            {snapshot.headline.workspace}
+            {activeSnapshot.headline.workspace}
           </button>
           <button className="toolbar-chip" type="button">
             <ChartNoAxesCombined className="size-4" />
-            {snapshot.headline.environment}
+            {activeSnapshot.headline.environment}
           </button>
-          <button className="toolbar-chip toolbar-chip-wide" type="button">
+          <div className="toolbar-chip toolbar-chip-wide gap-3 pr-3">
             <CalendarRange className="size-4" />
-            {snapshot.headline.rangeLabel}
-          </button>
+            <Select
+              onValueChange={(value) => {
+                const preset = value as TimeframePreset
+                setTimeframe((current) => ({
+                  endDay: current.endDay || snapshot.filters.availableEndDay,
+                  preset,
+                  startDay: current.startDay || snapshot.filters.availableStartDay,
+                }))
+              }}
+              value={timeframe.preset}
+            >
+              <SelectTrigger className="h-8 w-[148px] border-0 bg-transparent px-0 text-left text-sm font-medium text-slate-700 shadow-none focus:ring-0">
+                <SelectValue aria-label="Timeframe" placeholder="Select window" />
+              </SelectTrigger>
+              <SelectContent align="end">
+                <SelectItem value="24h">Last 24 hours</SelectItem>
+                <SelectItem value="7d">Last 7 days</SelectItem>
+                <SelectItem value="30d">Last 30 days</SelectItem>
+                <SelectItem value="90d">Last 90 days</SelectItem>
+                <SelectItem value="custom">Custom range</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">{activeSnapshot.headline.rangeLabel}</span>
+          </div>
+          {timeframe.preset === 'custom' ? (
+            <div className="toolbar-chip toolbar-chip-wide gap-2 pr-3">
+              <Input
+                aria-label="Start date"
+                className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
+                max={timeframe.endDay || snapshot.filters.availableEndDay}
+                min={snapshot.filters.availableStartDay}
+                onChange={(event) => setTimeframe((current) => ({ ...current, startDay: event.target.value }))}
+                type="date"
+                value={timeframe.startDay || snapshot.filters.availableStartDay}
+              />
+              <span className="text-slate-400">→</span>
+              <Input
+                aria-label="End date"
+                className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
+                max={snapshot.filters.availableEndDay}
+                min={timeframe.startDay || snapshot.filters.availableStartDay}
+                onChange={(event) => setTimeframe((current) => ({ ...current, endDay: event.target.value }))}
+                type="date"
+                value={timeframe.endDay || snapshot.filters.availableEndDay}
+              />
+            </div>
+          ) : null}
         </div>
 
         <label className="toolbar-search">
@@ -104,14 +158,14 @@ function Home() {
       </section>
 
       <section className="kpi-grid">
-        {snapshot.kpis.map((kpi) => (
+        {activeSnapshot.kpis.map((kpi) => (
           <Card key={kpi.label} className="kpi-card">
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-slate-500">{kpi.label}</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-semibold tracking-tight text-slate-950">{kpi.value}</div>
-              <p className={`mt-2 text-sm ${toneClassNameMap[kpi.tone]}`}>{snapshot.headline.sourceLabel}</p>
+              <p className={`mt-2 text-sm ${toneClassNameMap[kpi.tone]}`}>{activeSnapshot.headline.sourceLabel}</p>
             </CardContent>
           </Card>
         ))}
@@ -126,7 +180,7 @@ function Home() {
           ]}
           title="Requests / Cost / Cache"
         >
-          <TrafficBars data={snapshot.charts.requestsCostCache} />
+          <TrafficBars data={activeSnapshot.charts.requestsCostCache} />
         </ChartCard>
 
         <ChartCard
@@ -136,7 +190,7 @@ function Home() {
           ]}
           title="Input vs output"
         >
-          <LineChart data={snapshot.charts.inputOutput} title="Input and output tokens" />
+          <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
         </ChartCard>
 
         <Card className="panel-card panel-card-signals">
@@ -147,7 +201,7 @@ function Home() {
           </CardHeader>
           <CardContent className="p-0">
             <div className="issue-list">
-              {snapshot.issues.map((issue) => (
+              {activeSnapshot.issues.map((issue) => (
                 <div className="issue-row" key={`${issue.severity}:${issue.title}`}>
                   <div className="flex min-w-0 items-center gap-3">
                     <Badge className="issue-badge" variant="secondary">
@@ -167,7 +221,7 @@ function Home() {
         <ChartCard
           footer={
             <LegendStats
-              items={snapshot.charts.models.map((item) => ({
+              items={activeSnapshot.charts.models.map((item) => ({
                 accent: item.color,
                 label: item.model,
                 value: item.requests.toLocaleString('en-US'),
@@ -176,13 +230,13 @@ function Home() {
           }
           title="Model requests"
         >
-          <ModelBars data={snapshot.charts.models} valueKey="requests" />
+          <ModelBars data={activeSnapshot.charts.models} valueKey="requests" />
         </ChartCard>
 
         <ChartCard
           footer={
             <LegendStats
-              items={snapshot.charts.models.map((item) => ({
+              items={activeSnapshot.charts.models.map((item) => ({
                 accent: item.color,
                 label: item.model,
                 value: formatCompact(item.tokens),
@@ -191,13 +245,13 @@ function Home() {
           }
           title="Token volume"
         >
-          <TokenBars data={snapshot.charts.tokenVolume} />
+          <TokenBars data={activeSnapshot.charts.tokenVolume} />
         </ChartCard>
 
         <ChartCard
           footer={
             <LegendStats
-              items={snapshot.charts.models.map((item) => ({
+              items={activeSnapshot.charts.models.map((item) => ({
                 accent: item.color,
                 label: item.model,
                 value: `$${item.cost.toFixed(2)}`,
@@ -206,12 +260,12 @@ function Home() {
           }
           title="Allocated daily cost"
         >
-          <CostBars data={snapshot.charts.costByDay} />
+          <CostBars data={activeSnapshot.charts.costByDay} />
         </ChartCard>
       </section>
 
       <section className="callout-strip">
-        {snapshot.callouts.map((callout) => (
+        {activeSnapshot.callouts.map((callout) => (
           <article className="callout-card" key={callout}>
             <ArrowUpRight className="mt-0.5 size-4 text-indigo-600" />
             <p>{callout}</p>
@@ -229,7 +283,7 @@ function Home() {
           </div>
           <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
             <Activity className="mr-1 size-3.5" />
-            {snapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
+            {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
           </Badge>
         </CardHeader>
         <CardContent className="p-0">
@@ -247,7 +301,7 @@ function Home() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {snapshot.table.map((row) => (
+              {activeSnapshot.table.map((row) => (
                 <TableRow key={row.traceId}>
                   <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
                   <TableCell>
@@ -431,6 +485,20 @@ function CostBars({ data }: CostBarsProps) {
   )
 }
 
+function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
+  const dayCount = snapshot.filters.dailyRows.length
+
+  if (dayCount <= 1) {
+    return { endDay: snapshot.filters.availableEndDay, preset: '24h', startDay: snapshot.filters.availableStartDay }
+  }
+
+  if (dayCount <= 7) {
+    return { endDay: snapshot.filters.availableEndDay, preset: '7d', startDay: snapshot.filters.availableStartDay }
+  }
+
+  return { endDay: snapshot.filters.availableEndDay, preset: '30d', startDay: snapshot.filters.availableStartDay }
+}
+
 function formatCompact(value: number) {
   return new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 1,
@@ -442,6 +510,7 @@ function formatDay(value: string) {
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
     month: 'short',
+    timeZone: 'UTC',
     year: 'numeric',
   }).format(new Date(`${value}T00:00:00Z`))
 }
@@ -450,6 +519,7 @@ function formatDayShort(value: string) {
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
     month: 'short',
+    timeZone: 'UTC',
   }).format(new Date(`${value}T00:00:00Z`))
 }
 
