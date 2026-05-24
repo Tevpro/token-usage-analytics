@@ -1,27 +1,49 @@
+export type DashboardDailyRow = {
+  cachedTokens: number
+  cost: number
+  day: string
+  inputTokens: number
+  outputTokens: number
+  requests: number
+  totalTokens: number
+}
+
+export type DashboardIssue = {
+  count: number
+  severity: 'high' | 'medium' | 'low'
+  title: string
+}
+
+export type DashboardIssueByDay = DashboardIssue & {
+  day: string
+}
+
+export type DashboardModelSummary = {
+  cost: number
+  model: string
+  provider?: string
+  requests: number
+  tokens: number
+}
+
+export type DashboardModelDailyUsage = {
+  cost: number
+  day: string
+  model: string
+  provider: string
+  requests: number
+  tokens: number
+}
+
 type SnapshotBuildInput = {
-  dailyRows: Array<{
-    cachedTokens: number
-    cost: number
-    day: string
-    inputTokens: number
-    outputTokens: number
-    requests: number
-    totalTokens: number
-  }>
+  dailyRows: DashboardDailyRow[]
   environment: string
   generatedAt: string
-  issues: Array<{
-    count: number
-    severity: 'high' | 'medium' | 'low'
-    title: string
-  }>
-  models: Array<{
-    cost: number
-    model: string
-    provider?: string
-    requests: number
-    tokens: number
-  }>
+  issues: DashboardIssue[]
+  issuesByDay?: DashboardIssueByDay[]
+  models: DashboardModelSummary[]
+  modelRowsByDay?: DashboardModelDailyUsage[]
+  rangeLabel?: string
   sourceLabel: string
   statusNote?: string
   workspaceName: string
@@ -59,12 +81,14 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const topModel = modelRows.at(0)
   const topDayByTokens = [...input.dailyRows].sort((left, right) => right.totalTokens - left.totalTokens).at(0)
   const topDayByCost = [...input.dailyRows].sort((left, right) => right.cost - left.cost).at(0)
+  const availableStartDay = input.dailyRows[0]?.day || ''
+  const availableEndDay = input.dailyRows.at(-1)?.day || ''
 
   return {
     headline: {
       environment: input.environment,
       generatedAt: input.generatedAt,
-      rangeLabel: `Last ${input.dailyRows.length} days`,
+      rangeLabel: input.rangeLabel || `Last ${input.dailyRows.length} days`,
       sourceLabel: input.sourceLabel,
       summary:
         input.statusNote ||
@@ -147,6 +171,22 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         ? `${formatDay(topDayByCost.day)} carried the highest tracked cost at $${topDayByCost.cost.toFixed(2)}.`
         : `Source label: ${input.sourceLabel}.`,
     ],
+    filters: {
+      availableEndDay,
+      availableStartDay,
+      dailyRows: input.dailyRows,
+      issuesByDay: input.issuesByDay || input.issues.map((issue) => ({ ...issue, day: availableEndDay })),
+      modelRowsByDay:
+        input.modelRowsByDay ||
+        input.models.map((model) => ({
+          cost: model.cost,
+          day: availableEndDay,
+          model: model.model,
+          provider: model.provider || 'Unknown',
+          requests: model.requests,
+          tokens: model.tokens,
+        })),
+    },
   }
 }
 
@@ -214,6 +254,45 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       'Once the Worker starts receiving rollups, the dashboard will read D1 instead of sample data.',
       'The dashboard emphasizes tokens, requests, cache share, models, and tracked cost over decorative metrics.',
     ],
+    filters: {
+      availableEndDay: fallbackDays.at(-1) || '',
+      availableStartDay: fallbackDays[0] || '',
+      dailyRows: fallbackDays.map((day, index) => ({
+        cachedTokens: Math.round((90000 + index * 8000) * (0.08 + index * 0.01)),
+        cost: Number((1.8 + index * 0.35).toFixed(2)),
+        day,
+        inputTokens: 90000 + index * 8000,
+        outputTokens: 28000 + index * 3500,
+        requests: 24 + index * 3,
+        totalTokens: 118000 + index * 11500,
+      })),
+      issuesByDay: [
+        {
+          count: 1,
+          day: fallbackDays.at(-1) || '',
+          severity: 'medium',
+          title: 'Wire a real ingestion source, then let the Worker read D1 instead of sample data.',
+        },
+      ],
+      modelRowsByDay: fallbackDays.flatMap((day, index) => [
+        {
+          cost: 0,
+          day,
+          model: 'gpt-5.4',
+          provider: 'Hermes',
+          requests: 18 + index * 2,
+          tokens: 74000 + index * 6200,
+        },
+        {
+          cost: 0,
+          day,
+          model: 'claude-sonnet',
+          provider: 'Hermes',
+          requests: 6 + index,
+          tokens: 44000 + index * 5300,
+        },
+      ]),
+    },
   }
 }
 
@@ -238,6 +317,7 @@ function formatDay(value: string) {
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
     month: 'short',
+    timeZone: 'UTC',
     year: 'numeric',
   }).format(new Date(`${value}T00:00:00Z`))
 }
@@ -274,6 +354,13 @@ export type DashboardSnapshot = {
       outputTokens: number
     }>
   }
+  filters: {
+    availableEndDay: string
+    availableStartDay: string
+    dailyRows: DashboardDailyRow[]
+    issuesByDay: DashboardIssueByDay[]
+    modelRowsByDay: DashboardModelDailyUsage[]
+  }
   headline: {
     environment: string
     generatedAt: string
@@ -282,11 +369,7 @@ export type DashboardSnapshot = {
     summary: string
     workspace: string
   }
-  issues: Array<{
-    count: number
-    severity: 'high' | 'medium' | 'low'
-    title: string
-  }>
+  issues: DashboardIssue[]
   kpis: Array<{
     label: string
     tone: 'positive' | 'warning' | 'neutral' | 'negative'

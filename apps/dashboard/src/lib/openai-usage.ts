@@ -1,5 +1,9 @@
 import type { CloudflareAppEnv } from '#/lib/runtime'
-import type { DashboardSnapshot } from '#/lib/token-analytics'
+import type {
+  DashboardIssueByDay,
+  DashboardModelDailyUsage,
+  DashboardSnapshot,
+} from '#/lib/token-analytics'
 import { buildFallbackDashboardSnapshot, buildSnapshotFromRollups } from '#/lib/token-analytics'
 
 type DailyRollupRow = {
@@ -22,8 +26,13 @@ type ModelSummaryRow = {
   tokens: number
 }
 
+type ModelUsageRow = ModelSummaryRow & {
+  day: string
+}
+
 type IssueRow = {
   count: number
+  day: string
   severity: 'high' | 'medium' | 'low'
   title: string
 }
@@ -411,14 +420,17 @@ async function loadSnapshotFromD1(
   const firstDay = rows[0].day
   const lastDay = rows[rows.length - 1].day
   const models = await loadModelSummary(env.DB, selection.workspace.id, firstDay, lastDay)
-  const issues = await loadIssues(env.DB, selection.workspace.id, firstDay, lastDay)
+  const modelRowsByDay = await loadModelUsageByDay(env.DB, selection.workspace.id, firstDay, lastDay)
+  const issuesByDay = await loadIssues(env.DB, selection.workspace.id, firstDay, lastDay)
 
   return buildSnapshotFromRollups({
     dailyRows: rows,
     environment: rows[rows.length - 1].environment,
     generatedAt: new Date(selection.latestCreatedAt || Date.now()).toISOString(),
-    issues,
+    issues: summarizeIssues(issuesByDay),
+    issuesByDay,
     models,
+    modelRowsByDay,
     sourceLabel,
     statusNote: buildStatusNote(selection.workspace.provider, selection.latestCreatedAt, selection.latestDay),
     workspaceName: selection.workspace.name,
@@ -546,10 +558,32 @@ async function loadModelSummary(db: D1Database, workspaceId: string, startDay: s
   return result.results
 }
 
+async function loadModelUsageByDay(db: D1Database, workspaceId: string, startDay: string, endDay: string) {
+  const result = await db
+    .prepare(
+      `SELECT
+         daily_usage_rollups.usage_date as day,
+         model_daily_usage.model as model,
+         model_daily_usage.provider as provider,
+         model_daily_usage.requests as requests,
+         model_daily_usage.tokens as tokens,
+         model_daily_usage.estimated_cost_usd as cost
+       FROM model_daily_usage
+       INNER JOIN daily_usage_rollups ON daily_usage_rollups.id = model_daily_usage.rollup_id
+       WHERE daily_usage_rollups.workspace_id = ?
+         AND daily_usage_rollups.usage_date BETWEEN ? AND ?
+       ORDER BY daily_usage_rollups.usage_date ASC, model_daily_usage.tokens DESC`,
+    )
+    .bind(workspaceId, startDay, endDay)
+    .all<ModelUsageRow>()
+
+  return result.results satisfies DashboardModelDailyUsage[]
+}
+
 async function loadIssues(db: D1Database, workspaceId: string, startDay: string, endDay: string) {
   const result = await db
     .prepare(
-      `SELECT title, count, severity
+      `SELECT usage_date as day, title, count, severity
        FROM issue_events
        WHERE workspace_id = ?
          AND usage_date BETWEEN ? AND ?
@@ -559,6 +593,25 @@ async function loadIssues(db: D1Database, workspaceId: string, startDay: string,
     .all<IssueRow>()
 
   return result.results
+}
+
+function summarizeIssues(issueRows: DashboardIssueByDay[]) {
+  const issueMap = new Map<string, DashboardIssueByDay>()
+
+  for (const issue of issueRows) {
+    const key = `${issue.severity}:${issue.title}`
+    const current = issueMap.get(key)
+    if (current) {
+      current.count += issue.count
+      continue
+    }
+
+    issueMap.set(key, { ...issue })
+  }
+
+  return [...issueMap.values()]
+    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
+    .map(({ count, severity, title }) => ({ count, severity, title }))
 }
 
 function buildIssueStatements(db: D1Database, workspaceId: string, days: DayAccumulator[], nowMs: number) {
