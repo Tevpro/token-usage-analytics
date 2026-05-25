@@ -323,18 +323,6 @@ function Home() {
         </CardContent>
       </Card>
 
-      <section className="delivery-strip">
-        <div>
-          <p className="dashboard-kicker">Operating note</p>
-          <h2 className="text-xl font-semibold text-slate-950">
-            Cloudflare D1 is the read model, the upstream collector can run on a cron, and the browser stays out of the secrets business.
-          </h2>
-        </div>
-        <div className="flex items-center gap-3 text-sm text-slate-500">
-          <Activity className="size-4" />
-          Scheduled ingestion keeps the rollups fresh, and this view simply reloads the latest D1 snapshot.
-        </div>
-      </section>
     </main>
   )
 }
