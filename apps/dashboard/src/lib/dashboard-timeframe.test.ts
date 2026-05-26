@@ -74,4 +74,40 @@ describe('dashboard timeframe filtering', () => {
 
     expect(filtered.table.map((row) => row.day)).toEqual(['2026-05-01', '2026-05-02', '2026-05-03'])
   })
+
+  it('keeps same-named models from different providers separate after filtering', () => {
+    const providerSplitSnapshot = buildSnapshotFromRollups({
+      dailyRows: [
+        { cachedTokens: 90, cost: 1.2, day: '2026-05-01', inputTokens: 900, outputTokens: 300, requests: 9, totalTokens: 1200 },
+        { cachedTokens: 120, cost: 1.6, day: '2026-05-02', inputTokens: 1200, outputTokens: 400, requests: 12, totalTokens: 1600 },
+      ],
+      environment: 'production',
+      generatedAt: '2026-05-02T12:00:00Z',
+      issues: [],
+      modelRowsByDay: [
+        { cost: 0.6, day: '2026-05-01', model: 'claude-sonnet-4', provider: 'OpenRouter', requests: 5, tokens: 700 },
+        { cost: 0.6, day: '2026-05-01', model: 'claude-sonnet-4', provider: 'Anthropic', requests: 4, tokens: 500 },
+        { cost: 0.8, day: '2026-05-02', model: 'claude-sonnet-4', provider: 'OpenRouter', requests: 7, tokens: 900 },
+        { cost: 0.8, day: '2026-05-02', model: 'claude-sonnet-4', provider: 'Anthropic', requests: 5, tokens: 700 },
+      ],
+      models: [
+        { cost: 1.4, model: 'claude-sonnet-4', provider: 'OpenRouter', requests: 12, tokens: 1600 },
+        { cost: 1.4, model: 'claude-sonnet-4', provider: 'Anthropic', requests: 9, tokens: 1200 },
+      ],
+      sourceLabel: 'Hermes plugin sync',
+      workspaceName: 'Hermes Usage',
+    })
+
+    const filtered = filterSnapshotByTimeframe(providerSplitSnapshot, {
+      endDay: '2026-05-02',
+      preset: 'custom',
+      startDay: '2026-05-01',
+    })
+
+    expect(filtered.charts.models).toHaveLength(2)
+    expect(filtered.charts.models.map((item) => ({ model: item.model, provider: item.provider, requests: item.requests, tokens: item.tokens }))).toEqual([
+      { model: 'claude-sonnet-4', provider: 'OpenRouter', requests: 12, tokens: 1600 },
+      { model: 'claude-sonnet-4', provider: 'Anthropic', requests: 9, tokens: 1200 },
+    ])
+  })
 })

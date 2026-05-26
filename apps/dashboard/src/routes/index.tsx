@@ -48,6 +48,7 @@ export const Route = createFileRoute('/')({
 
 function Home() {
   const snapshot = Route.useLoaderData()
+  const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(snapshot, timeframe), [snapshot, timeframe])
 
@@ -75,7 +76,11 @@ function Home() {
             </div>
           </div>
 
-          <Tabs defaultValue="overview" className="w-full">
+          <Tabs
+            className="w-full"
+            onValueChange={(value) => setActiveTab(value as DashboardTab)}
+            value={activeTab}
+          >
             <TabsList className="dashboard-tabs-list">
               <TabsTrigger className="dashboard-tab-trigger" value="overview">Overview</TabsTrigger>
               <TabsTrigger className="dashboard-tab-trigger" value="models">Models</TabsTrigger>
@@ -171,159 +176,300 @@ function Home() {
         ))}
       </section>
 
-      <section className="analytics-grid analytics-grid-top">
-        <ChartCard
-          legend={[
-            { label: 'Requests', color: 'var(--chart-grey)' },
-            { label: 'Cost ×10', color: 'var(--chart-red)' },
-            { label: 'Cached %', color: 'var(--chart-violet)' },
-          ]}
-          title="Requests / Cost / Cache"
-        >
-          <TrafficBars data={activeSnapshot.charts.requestsCostCache} />
-        </ChartCard>
+      {activeTab === 'overview' ? (
+        <>
+          <section className="analytics-grid analytics-grid-top">
+            <ChartCard
+              legend={[
+                { label: 'Requests', color: 'var(--chart-grey)' },
+                { label: 'Cost ×10', color: 'var(--chart-red)' },
+                { label: 'Cached %', color: 'var(--chart-violet)' },
+              ]}
+              title="Requests / Cost / Cache"
+            >
+              <TrafficBars data={activeSnapshot.charts.requestsCostCache} />
+            </ChartCard>
 
-        <ChartCard
-          legend={[
-            { label: 'Input tokens', color: 'var(--chart-violet)' },
-            { label: 'Output tokens', color: 'var(--chart-ink)' },
-          ]}
-          title="Input vs output"
-        >
-          <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
-        </ChartCard>
+            <ChartCard
+              legend={[
+                { label: 'Input tokens', color: 'var(--chart-violet)' },
+                { label: 'Output tokens', color: 'var(--chart-ink)' },
+              ]}
+              title="Input vs output"
+            >
+              <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
+            </ChartCard>
 
-        <Card className="panel-card panel-card-signals">
-          <CardHeader className="panel-header-row">
-            <div>
-              <CardTitle className="panel-title">Signals</CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="issue-list">
-              {activeSnapshot.issues.map((issue) => (
-                <div className="issue-row" key={`${issue.severity}:${issue.title}`}>
-                  <div className="flex min-w-0 items-center gap-3">
-                    <Badge className="issue-badge" variant="secondary">
-                      {issue.severity}
-                    </Badge>
-                    <span className="truncate text-sm text-indigo-700">{issue.title}</span>
-                  </div>
-                  <span className="text-sm font-medium text-slate-600">{issue.count}</span>
+            <Card className="panel-card panel-card-signals">
+              <CardHeader className="panel-header-row">
+                <div>
+                  <CardTitle className="panel-title">Signals</CardTitle>
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </section>
-
-      <section className="analytics-grid analytics-grid-bottom">
-        <ChartCard
-          footer={
-            <LegendStats
-              items={activeSnapshot.charts.models.map((item) => ({
-                accent: item.color,
-                label: item.model,
-                value: item.requests.toLocaleString('en-US'),
-              }))}
-            />
-          }
-          title="Model requests"
-        >
-          <ModelBars data={activeSnapshot.charts.models} valueKey="requests" />
-        </ChartCard>
-
-        <ChartCard
-          footer={
-            <LegendStats
-              items={activeSnapshot.charts.models.map((item) => ({
-                accent: item.color,
-                label: item.model,
-                value: formatCompact(item.tokens),
-              }))}
-            />
-          }
-          title="Token volume"
-        >
-          <TokenBars data={activeSnapshot.charts.tokenVolume} />
-        </ChartCard>
-
-        <ChartCard
-          footer={
-            <LegendStats
-              items={activeSnapshot.charts.models.map((item) => ({
-                accent: item.color,
-                label: item.model,
-                value: `$${item.cost.toFixed(2)}`,
-              }))}
-            />
-          }
-          title="Allocated daily cost"
-        >
-          <CostBars data={activeSnapshot.charts.costByDay} />
-        </ChartCard>
-      </section>
-
-      <section className="callout-strip">
-        {activeSnapshot.callouts.map((callout) => (
-          <article className="callout-card" key={callout}>
-            <ArrowUpRight className="mt-0.5 size-4 text-indigo-600" />
-            <p>{callout}</p>
-          </article>
-        ))}
-      </section>
-
-      <Card className="panel-card overflow-hidden daily-rollups-card">
-        <CardHeader className="panel-header-row">
-          <div>
-            <CardTitle className="panel-title">Daily rollups</CardTitle>
-            <p className="mt-1 text-sm text-slate-500">
-              Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.
-            </p>
-          </div>
-          <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
-            <Activity className="mr-1 size-3.5" />
-            {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
-          </Badge>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table className="daily-rollups-table">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
-                <TableHead>Day</TableHead>
-                <TableHead className="text-right">Requests</TableHead>
-                <TableHead className="text-right">Total Tokens</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">Input</TableHead>
-                <TableHead className="hidden lg:table-cell text-right">Output</TableHead>
-                <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
-                <TableHead className="text-right">Cost</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {activeSnapshot.table.map((row) => (
-                <TableRow key={row.traceId}>
-                  <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
-                  <TableCell>
-                    <div className="flex flex-col gap-1">
-                      <span>{formatDay(row.day)}</span>
-                      <span className="text-xs text-slate-500 sm:hidden">{row.traceId}</span>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="issue-list">
+                  {activeSnapshot.issues.map((issue) => (
+                    <div className="issue-row" key={`${issue.severity}:${issue.title}`}>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Badge className="issue-badge" variant="secondary">
+                          {issue.severity}
+                        </Badge>
+                        <span className="truncate text-sm text-indigo-700">{issue.title}</span>
+                      </div>
+                      <span className="text-sm font-medium text-slate-600">{issue.count}</span>
                     </div>
-                  </TableCell>
-                  <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
-                  <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
-                  <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.inputTokens)}</TableCell>
-                  <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.outputTokens)}</TableCell>
-                  <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
-                  <TableCell className="text-right">${row.cost.toFixed(2)}</TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+          </section>
 
+          <section className="callout-strip">
+            {activeSnapshot.callouts.map((callout) => (
+              <article className="callout-card" key={callout}>
+                <ArrowUpRight className="mt-0.5 size-4 text-indigo-600" />
+                <p>{callout}</p>
+              </article>
+            ))}
+          </section>
+
+          <Card className="panel-card overflow-hidden daily-rollups-card">
+            <CardHeader className="panel-header-row">
+              <div>
+                <CardTitle className="panel-title">Daily rollups</CardTitle>
+                <p className="mt-1 text-sm text-slate-500">
+                  Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.
+                </p>
+              </div>
+              <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
+                <Activity className="mr-1 size-3.5" />
+                {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
+              </Badge>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table className="daily-rollups-table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
+                    <TableHead>Day</TableHead>
+                    <TableHead className="text-right">Requests</TableHead>
+                    <TableHead className="text-right">Total Tokens</TableHead>
+                    <TableHead className="hidden lg:table-cell text-right">Input</TableHead>
+                    <TableHead className="hidden lg:table-cell text-right">Output</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activeSnapshot.table.map((row) => (
+                    <TableRow key={row.traceId}>
+                      <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <span>{formatDay(row.day)}</span>
+                          <span className="text-xs text-slate-500 sm:hidden">{row.traceId}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
+                      <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
+                      <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.inputTokens)}</TableCell>
+                      <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.outputTokens)}</TableCell>
+                      <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
+                      <TableCell className="text-right">${row.cost.toFixed(2)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+
+      {activeTab === 'models' ? (
+        <div className="space-y-6">
+          <ModelUsageBreakdownCard models={activeSnapshot.charts.models} />
+
+          <section className="analytics-grid analytics-grid-bottom">
+            <ChartCard
+              footer={
+                <LegendStats
+                  items={activeSnapshot.charts.models.map((item) => ({
+                    accent: item.color,
+                    key: `${item.provider}:${item.model}:requests`,
+                    label: formatModelLabel(item.model, item.provider),
+                    value: item.requests.toLocaleString('en-US'),
+                  }))}
+                />
+              }
+              title="Model requests"
+            >
+              <ModelBars data={activeSnapshot.charts.models} valueKey="requests" />
+            </ChartCard>
+
+            <ChartCard
+              footer={
+                <LegendStats
+                  items={activeSnapshot.charts.models.map((item) => ({
+                    accent: item.color,
+                    key: `${item.provider}:${item.model}:tokens`,
+                    label: formatModelLabel(item.model, item.provider),
+                    value: formatCompact(item.tokens),
+                  }))}
+                />
+              }
+              title="Token volume"
+            >
+              <TokenBars data={activeSnapshot.charts.tokenVolume} />
+            </ChartCard>
+
+            <ChartCard
+              footer={
+                <LegendStats
+                  items={activeSnapshot.charts.models.map((item) => ({
+                    accent: item.color,
+                    key: `${item.provider}:${item.model}:cost`,
+                    label: formatModelLabel(item.model, item.provider),
+                    value: formatCurrency(item.cost),
+                  }))}
+                />
+              }
+              title="Allocated daily cost"
+            >
+              <CostBars data={activeSnapshot.charts.costByDay} />
+            </ChartCard>
+          </section>
+        </div>
+      ) : null}
+
+      {activeTab === 'cost' ? (
+        <>
+          <section className="analytics-grid analytics-grid-top">
+            <ChartCard
+              legend={[
+                { label: 'Requests', color: 'var(--chart-grey)' },
+                { label: 'Cost ×10', color: 'var(--chart-red)' },
+                { label: 'Cached %', color: 'var(--chart-violet)' },
+              ]}
+              title="Requests / Cost / Cache"
+            >
+              <TrafficBars data={activeSnapshot.charts.requestsCostCache} />
+            </ChartCard>
+
+            <ChartCard
+              legend={[
+                { label: 'Input tokens', color: 'var(--chart-violet)' },
+                { label: 'Output tokens', color: 'var(--chart-ink)' },
+              ]}
+              title="Input vs output"
+            >
+              <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
+            </ChartCard>
+
+            <ChartCard title="Allocated daily cost">
+              <CostBars data={activeSnapshot.charts.costByDay} />
+            </ChartCard>
+          </section>
+
+          <Card className="panel-card overflow-hidden daily-rollups-card">
+            <CardHeader className="panel-header-row">
+              <div>
+                <CardTitle className="panel-title">Daily rollups</CardTitle>
+                <p className="mt-1 text-sm text-slate-500">
+                  Review the daily request, token, cache, and cost totals behind the current cost window.
+                </p>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <Table className="daily-rollups-table">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
+                    <TableHead>Day</TableHead>
+                    <TableHead className="text-right">Requests</TableHead>
+                    <TableHead className="text-right">Total Tokens</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
+                    <TableHead className="text-right">Cost</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {activeSnapshot.table.map((row) => (
+                    <TableRow key={`${row.traceId}:cost`}>
+                      <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
+                      <TableCell>{formatDay(row.day)}</TableCell>
+                      <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
+                      <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
+                      <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
+                      <TableCell className="text-right">{formatCurrency(row.cost)}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
     </main>
+  )
+}
+
+function ModelUsageBreakdownCard({ models }: ModelUsageBreakdownCardProps) {
+  if (models.length <= 1) {
+    return null
+  }
+
+  const totalTokens = models.reduce((sum, item) => sum + item.tokens, 0)
+
+  return (
+    <Card className="panel-card">
+      <CardHeader className="panel-header-row">
+        <div>
+          <CardTitle className="panel-title">Model usage breakdown</CardTitle>
+          <p className="mt-1 text-sm text-slate-500">
+            More than one model was active in this window, so this view breaks usage down by token share.
+          </p>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex h-3 overflow-hidden rounded-full bg-slate-100">
+          {models.map((item) => {
+            const share = totalTokens > 0 ? (item.tokens / totalTokens) * 100 : 0
+
+            return (
+              <span
+                className="h-full"
+                key={`${item.provider}:${item.model}:share-bar`}
+                style={{ backgroundColor: item.color, width: `${Math.max(share, 3)}%` }}
+              />
+            )
+          })}
+        </div>
+
+        <div className="legend-stats">
+          {models.map((item) => {
+            const share = totalTokens > 0 ? (item.tokens / totalTokens) * 100 : 0
+
+            return (
+              <div className="legend-stat-row" key={`${item.provider}:${item.model}:share-row`}>
+                <div className="flex min-w-0 flex-col gap-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="legend-dot" style={{ backgroundColor: item.color }} />
+                    <span className="truncate font-medium text-slate-800">{formatModelLabel(item.model, item.provider)}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    <span>{item.requests.toLocaleString('en-US')} requests</span>
+                    <span>•</span>
+                    <span>{formatCompact(item.tokens)} tokens</span>
+                    <span>•</span>
+                    <span>{formatCurrency(item.cost)}</span>
+                  </div>
+                </div>
+                <span className="font-medium text-slate-700">{share.toFixed(1)}%</span>
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -366,7 +512,7 @@ function LegendStats({ items }: LegendStatsProps) {
   return (
     <div className="legend-stats">
       {items.map((item) => (
-        <div className="legend-stat-row" key={item.label}>
+        <div className="legend-stat-row" key={item.key}>
           <div className="flex min-w-0 items-center gap-2">
             <span className="legend-dot" style={{ backgroundColor: item.accent }} />
             <span className="truncate">{item.label}</span>
@@ -419,14 +565,14 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   return (
     <div className="chart-block chart-block-bars chart-block-thick">
       {data.map((item) => (
-        <div className="bar-group" key={item.model}>
+        <div className="bar-group" key={`${item.provider}:${item.model}:${valueKey}`}>
           <div className="bar-stack bar-stack-wide">
             <span
               className="bar"
               style={{ backgroundColor: item.color, height: `${(item[valueKey] / maxValue) * 100}%` }}
             />
           </div>
-          <span className="chart-label chart-label-wide">{item.model}</span>
+          <span className="chart-label chart-label-wide">{formatModelLabel(item.model, item.provider)}</span>
         </div>
       ))}
     </div>
@@ -494,6 +640,14 @@ function formatCompact(value: number) {
   }).format(value)
 }
 
+function formatCurrency(value: number) {
+  return `$${value.toFixed(2)}`
+}
+
+function formatModelLabel(model: string, provider: string) {
+  return provider ? `${provider} · ${model}` : model
+}
+
 function formatDay(value: string) {
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
@@ -549,8 +703,22 @@ type LegendRowProps = {
 type LegendStatsProps = {
   items: Array<{
     accent: string
+    key: string
     label: string
     value: string
+  }>
+}
+
+type DashboardTab = 'overview' | 'models' | 'cost'
+
+type ModelUsageBreakdownCardProps = {
+  models: Array<{
+    color: string
+    cost: number
+    model: string
+    provider: string
+    requests: number
+    tokens: number
   }>
 }
 
