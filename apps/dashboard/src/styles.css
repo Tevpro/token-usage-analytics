@@ -176,9 +176,6 @@
     min-width: 560px;
   }
 
-  .delivery-strip {
-    padding-top: 18px;
-  }
 }
 
 .dashboard-header {
@@ -613,17 +610,4 @@
   font-size: 0.94rem;
 }
 
-.delivery-strip {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  padding: 22px 4px 0;
-}
 
-@media (min-width: 1080px) {
-  .delivery-strip {
-    flex-direction: row;
-    align-items: flex-end;
-    justify-content: space-between;
-  }
-}
