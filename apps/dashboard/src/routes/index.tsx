@@ -286,7 +286,7 @@ function Home() {
       ) : null}
 
       {activeTab === 'models' ? (
-        <>
+        <div className="space-y-6">
           <ModelUsageBreakdownCard models={activeSnapshot.charts.models} />
 
           <section className="analytics-grid analytics-grid-bottom">
@@ -338,7 +338,7 @@ function Home() {
               <CostBars data={activeSnapshot.charts.costByDay} />
             </ChartCard>
           </section>
-        </>
+        </div>
       ) : null}
 
       {activeTab === 'cost' ? (
