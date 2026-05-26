@@ -72,7 +72,8 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     },
   )
 
-  const cacheRate = totals.inputTokens > 0 ? totals.cachedTokens / totals.inputTokens : 0
+  const totalInputTokens = input.dailyRows.reduce((sum, row) => sum + resolveTotalInputTokens(row), 0)
+  const cacheRate = totalInputTokens > 0 ? Math.min(1, totals.cachedTokens / totalInputTokens) : 0
   const modelRows = input.models.map((model, index) => ({
     ...model,
     color: MODEL_COLORS[index % MODEL_COLORS.length],
@@ -124,7 +125,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       })),
       inputOutput: input.dailyRows.map((row) => ({
         day: row.day,
-        primary: row.inputTokens,
+        primary: resolveTotalInputTokens(row),
         secondary: row.outputTokens,
       })),
       models: modelRows,
@@ -132,11 +133,11 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         day: row.day,
         primary: row.requests,
         secondary: Math.round(row.cost * 10),
-        tertiary: row.inputTokens > 0 ? Math.round((row.cachedTokens / row.inputTokens) * 100) : 0,
+        tertiary: Math.round(calculateCachedShare(row) * 100),
       })),
       tokenVolume: input.dailyRows.map((row) => ({
         day: row.day,
-        inputTokens: row.inputTokens,
+        inputTokens: resolveTotalInputTokens(row),
         outputTokens: row.outputTokens,
       })),
     },
@@ -151,10 +152,10 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
             },
           ],
     table: input.dailyRows.map((row) => ({
-      cachedShare: row.inputTokens > 0 ? row.cachedTokens / row.inputTokens : 0,
+      cachedShare: calculateCachedShare(row),
       cost: row.cost,
       day: row.day,
-      inputTokens: row.inputTokens,
+      inputTokens: resolveTotalInputTokens(row),
       outputTokens: row.outputTokens,
       requests: row.requests,
       totalTokens: row.totalTokens,
@@ -311,6 +312,21 @@ function formatCompactNumber(value: number) {
     maximumFractionDigits: 1,
     notation: 'compact',
   }).format(value)
+}
+
+export function resolveTotalInputTokens(row: Pick<DashboardDailyRow, 'inputTokens' | 'outputTokens' | 'totalTokens'>) {
+  return Math.max(row.inputTokens, row.totalTokens - row.outputTokens, 0)
+}
+
+export function calculateCachedShare(
+  row: Pick<DashboardDailyRow, 'cachedTokens' | 'inputTokens' | 'outputTokens' | 'totalTokens'>,
+) {
+  const totalInputTokens = resolveTotalInputTokens(row)
+  if (totalInputTokens <= 0 || row.cachedTokens <= 0) {
+    return 0
+  }
+
+  return Math.min(1, row.cachedTokens / totalInputTokens)
 }
 
 function formatDay(value: string) {
