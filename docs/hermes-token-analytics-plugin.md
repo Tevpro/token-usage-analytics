@@ -62,6 +62,8 @@ Scheduling is **not** plugin config.
 - Put cadence, pause/resume state, and one-off triggering under `hermes cron ...`
 - Put endpoint, token, DB path, workspace labeling, and backfill depth under plugin env/config
 
+UI note: the dashboard may refer to these imported workspaces as **Agents** in user-facing filters and breakdowns. The plugin config keys remain workspace-based.
+
 If a sync is running at the wrong time, fix Hermes cron.
 If a sync is reading the wrong DB or posting to the wrong workspace, fix plugin config.
 
@@ -96,8 +98,8 @@ The plugin uses environment variables as the operator-facing source of truth.
 | `HERMES_TOKEN_ANALYTICS_DB_TIMEOUT` | No | `30` seconds | `30` | SQLite and network-facing timeout budget for sync operations. Increase if the host or endpoint is slow. |
 | `HERMES_TOKEN_ANALYTICS_ENDPOINT` | Yes | none | `https://token-usage-analytics.tevpro.workers.dev/api/ingest/hermes-usage` | Full HTTPS ingest URL for this dashboard. |
 | `HERMES_TOKEN_ANALYTICS_TOKEN` | Yes | none | `tok_live_xxx` | Bearer token sent to the Worker. Must match Worker `INGEST_SHARED_SECRET`. |
-| `HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG` | No | `hermes-usage` | `prod-hermes-usage` | Stable workspace identifier used by the dashboard and D1 rows. Keep this stable once data exists. |
-| `HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME` | No | `Hermes Usage` | `Tevpro Hermes Usage` | Human-readable workspace label shown in the dashboard. |
+| `HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG` | No | `hermes-usage` | `prod-hermes-usage` | Stable workspace identifier used by the dashboard and D1 rows. Keep this stable once data exists. In the current dashboard UI, this workspace is presented as an agent selection. |
+| `HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME` | No | `Hermes Usage` | `Tevpro Hermes Usage` | Human-readable workspace label shown in the dashboard. In the current UI this is the friendly agent name users see. |
 | `HERMES_TOKEN_ANALYTICS_ENVIRONMENT` | No | `production` | `staging` | Environment label attached to imported rollups. |
 | `HERMES_TOKEN_ANALYTICS_DAYS_BACK` | No | `30` | `14` | Backfill window for each sync. The plugin rereads this many days and republishes that range. |
 
@@ -117,7 +119,7 @@ export HERMES_TOKEN_ANALYTICS_DAYS_BACK="30"
 ### Configuration notes
 
 - `show-config` should display the **effective** config, with secrets redacted.
-- Keep `WORKSPACE_SLUG` stable. Changing it creates or selects a different dashboard workspace.
+- Keep `WORKSPACE_SLUG` stable. Changing it creates or selects a different dashboard workspace/agent identity in the UI.
 - `DAYS_BACK` controls how much history each run republishes. A larger number is useful for repair or backfill, but it increases sync work.
 - `DB_TIMEOUT` should be treated as an operator knob, not a scheduler knob.
 
