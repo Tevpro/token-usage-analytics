@@ -9,6 +9,9 @@ import { TanStackDevtools } from '@tanstack/react-devtools'
 import TanStackQueryDevtools from '../integrations/tanstack-query/devtools'
 
 import appCss from '../styles.css?url'
+import faviconIco from '../../public/favicon.ico?url'
+import faviconSvg from '../../public/favicon.svg?url'
+import logo192 from '../../public/logo192.png?url'
 
 import type { QueryClient } from '@tanstack/react-query'
 
@@ -31,6 +34,24 @@ export const Route = createRootRouteWithContext<MyRouterContext>()({
       },
     ],
     links: [
+      {
+        rel: 'icon',
+        href: faviconSvg,
+        type: 'image/svg+xml',
+      },
+      {
+        rel: 'alternate icon',
+        href: faviconIco,
+        type: 'image/x-icon',
+      },
+      {
+        rel: 'apple-touch-icon',
+        href: logo192,
+      },
+      {
+        rel: 'manifest',
+        href: '/manifest.json',
+      },
       {
         rel: 'stylesheet',
         href: appCss,
