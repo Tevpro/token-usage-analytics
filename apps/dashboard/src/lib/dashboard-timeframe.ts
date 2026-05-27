@@ -1,9 +1,9 @@
-import {
-  buildSnapshotFromRollups,
-  type DashboardIssueByDay,
-  type DashboardModelDailyUsage,
-  type DashboardModelSummary,
-  type DashboardSnapshot,
+import { buildSnapshotFromRollups } from '#/lib/token-analytics'
+import type {
+  DashboardIssueByDay,
+  DashboardModelDailyUsage,
+  DashboardModelSummary,
+  DashboardSnapshot,
 } from '#/lib/token-analytics'
 
 export type TimeframePreset = '24h' | '7d' | '30d' | '90d' | 'custom'
@@ -30,9 +30,7 @@ const PRESET_DAY_COUNTS: Record<Exclude<TimeframePreset, 'custom'>, number> = {
 
 export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection: TimeframeSelection): DashboardSnapshot {
   const resolved = resolveTimeframeSelection(snapshot, selection)
-  const filteredDailyRows = snapshot.filters.dailyRows.filter(
-    (row) => row.day >= resolved.startDay && row.day <= resolved.endDay,
-  )
+  const filteredDailyRows = snapshot.filters.dailyRows.filter((row) => row.day >= resolved.startDay && row.day <= resolved.endDay)
   const filteredIssueRows = snapshot.filters.issuesByDay.filter(
     (issue) => issue.day >= resolved.startDay && issue.day <= resolved.endDay,
   )
@@ -41,6 +39,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
   )
 
   return buildSnapshotFromRollups({
+    availableProjects: snapshot.filters.availableProjects,
     dailyRows: filteredDailyRows,
     environment: snapshot.headline.environment,
     generatedAt: snapshot.headline.generatedAt,
@@ -49,6 +48,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
     models: summarizeModels(filteredModelRows),
     modelRowsByDay: filteredModelRows,
     rangeLabel: resolved.rangeLabel,
+    selectedProjectIds: snapshot.filters.selectedProjectIds,
     sourceLabel: snapshot.headline.sourceLabel,
     statusNote: snapshot.headline.summary,
     workspaceName: snapshot.headline.workspace,

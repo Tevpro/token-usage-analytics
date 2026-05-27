@@ -1,4 +1,5 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useMemo, useState } from 'react'
+import type { ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
@@ -26,13 +27,11 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
-import {
-  filterSnapshotByTimeframe,
-  type TimeframePreset,
-  type TimeframeSelection,
-} from '#/lib/dashboard-timeframe'
+import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
+import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
+import type { TimeframePreset, TimeframeSelection } from '#/lib/dashboard-timeframe'
 import { loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
-import type { DashboardSnapshot } from '#/lib/token-analytics'
+import type { DashboardProjectSummary, DashboardSnapshot } from '#/lib/token-analytics'
 
 const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
   const { getRuntimeEnv } = await import('#/lib/worker-env')
@@ -48,8 +47,10 @@ export const Route = createFileRoute('/')({
 function Home() {
   const snapshot = Route.useLoaderData()
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
   const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
-  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(snapshot, timeframe), [snapshot, timeframe])
+  const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
+  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
 
   return (
     <main className="dashboard-shell">
@@ -91,19 +92,20 @@ function Home() {
 
       <section className="dashboard-toolbar">
         <div className="toolbar-chip-group">
-          <button className="toolbar-chip" type="button">
-            <Bot className="size-4" />
-            {activeSnapshot.headline.workspace}
-          </button>
+          <ProjectFilterChip
+            availableProjects={snapshot.projects.available}
+            onChange={setSelectedProjectIds}
+            selectedProjectIds={selectedProjectIds}
+          />
           <div className="toolbar-chip toolbar-chip-wide gap-3 pr-3">
             <CalendarRange className="size-4" />
             <Select
               onValueChange={(value) => {
                 const preset = value as TimeframePreset
                 setTimeframe((current) => ({
-                  endDay: current.endDay || snapshot.filters.availableEndDay,
+                  endDay: current.endDay || projectSnapshot.filters.availableEndDay,
                   preset,
-                  startDay: current.startDay || snapshot.filters.availableStartDay,
+                  startDay: current.startDay || projectSnapshot.filters.availableStartDay,
                 }))
               }}
               value={timeframe.preset}
@@ -126,21 +128,21 @@ function Home() {
               <Input
                 aria-label="Start date"
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
-                max={timeframe.endDay || snapshot.filters.availableEndDay}
-                min={snapshot.filters.availableStartDay}
+                max={timeframe.endDay || projectSnapshot.filters.availableEndDay}
+                min={projectSnapshot.filters.availableStartDay}
                 onChange={(event) => setTimeframe((current) => ({ ...current, startDay: event.target.value }))}
                 type="date"
-                value={timeframe.startDay || snapshot.filters.availableStartDay}
+                value={timeframe.startDay || projectSnapshot.filters.availableStartDay}
               />
               <span className="text-slate-400">→</span>
               <Input
                 aria-label="End date"
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
-                max={snapshot.filters.availableEndDay}
-                min={timeframe.startDay || snapshot.filters.availableStartDay}
+                max={projectSnapshot.filters.availableEndDay}
+                min={timeframe.startDay || projectSnapshot.filters.availableStartDay}
                 onChange={(event) => setTimeframe((current) => ({ ...current, endDay: event.target.value }))}
                 type="date"
-                value={timeframe.endDay || snapshot.filters.availableEndDay}
+                value={timeframe.endDay || projectSnapshot.filters.availableEndDay}
               />
             </div>
           ) : null}
@@ -227,6 +229,8 @@ function Home() {
               </article>
             ))}
           </section>
+
+          <ProjectBreakdownCard projects={activeSnapshot.projects.breakdown} />
 
           <Card className="panel-card overflow-hidden daily-rollups-card">
             <CardHeader className="panel-header-row">
@@ -365,6 +369,8 @@ function Home() {
             </ChartCard>
           </section>
 
+          <ProjectBreakdownCard projects={activeSnapshot.projects.breakdown} />
+
           <Card className="panel-card overflow-hidden daily-rollups-card">
             <CardHeader className="panel-header-row">
               <div>
@@ -463,6 +469,140 @@ function ModelUsageBreakdownCard({ models }: ModelUsageBreakdownCardProps) {
             )
           })}
         </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ProjectFilterChip({
+  availableProjects,
+  onChange,
+  selectedProjectIds,
+}: ProjectFilterChipProps) {
+  const selectedSet = new Set(selectedProjectIds)
+  const selectedLabel =
+    selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjects.length
+      ? availableProjects.length === 1
+        ? availableProjects[0]?.projectName || 'Agent'
+        : 'All agents'
+      : selectedProjectIds.length === 1
+        ? availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected agent'
+        : `${selectedProjectIds.length} selected agents`
+
+  const toggleProject = (projectId: string) => {
+    if (selectedProjectIds.length === 0) {
+      onChange(availableProjects.map((project) => project.projectId).filter((id) => id !== projectId))
+      return
+    }
+
+    if (selectedSet.has(projectId)) {
+      const next = selectedProjectIds.filter((id) => id !== projectId)
+      onChange(next.length === 0 || next.length === availableProjects.length ? [] : next)
+      return
+    }
+
+    const next = [...selectedProjectIds, projectId]
+    onChange(next.length === availableProjects.length ? [] : next)
+  }
+
+  return (
+    <details className="relative">
+      <summary className="toolbar-chip cursor-pointer list-none">
+        <Bot className="size-4" />
+        {selectedLabel}
+        <span className="text-[10px] uppercase tracking-[0.24em] text-slate-400">
+          {selectedProjectIds.length === 0 ? 'all' : `${selectedProjectIds.length}/${availableProjects.length}`}
+        </span>
+      </summary>
+      <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 min-w-[280px] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">Agents</p>
+            <p className="text-xs text-slate-500">Select one or more agents to compare or roll up.</p>
+          </div>
+          <Button onClick={() => onChange([])} size="sm" type="button" variant="ghost">
+            All
+          </Button>
+        </div>
+        <div className="space-y-2">
+          {availableProjects.map((project) => {
+            const checked = selectedProjectIds.length === 0 || selectedSet.has(project.projectId)
+
+            return (
+              <label
+                className="flex cursor-pointer items-start justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm hover:border-slate-300 hover:bg-slate-50"
+                key={project.projectId}
+              >
+                <div className="min-w-0">
+                  <div className="font-medium text-slate-800">{project.projectName}</div>
+                  <div className="mt-1 text-xs text-slate-500">
+                    {project.projectProvider} · {project.projectSlug}
+                  </div>
+                </div>
+                <input
+                  checked={checked}
+                  className="mt-1 size-4 rounded border-slate-300"
+                  onChange={() => toggleProject(project.projectId)}
+                  type="checkbox"
+                />
+              </label>
+            )
+          })}
+        </div>
+      </div>
+    </details>
+  )
+}
+
+function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
+  if (projects.length <= 1) {
+    return null
+  }
+
+  return (
+    <Card className="panel-card overflow-hidden">
+      <CardHeader className="panel-header-row">
+        <div>
+          <CardTitle className="panel-title">Agent breakdown</CardTitle>
+          <p className="mt-1 text-sm text-slate-500">
+            Compare combined usage against the individual agents contributing to this window.
+          </p>
+        </div>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Agent</TableHead>
+              <TableHead className="hidden md:table-cell">Identifier</TableHead>
+              <TableHead className="text-right">Requests</TableHead>
+              <TableHead className="text-right">Tokens</TableHead>
+              <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
+              <TableHead className="text-right">Cost</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {projects.map((project) => (
+              <TableRow key={project.projectId}>
+                <TableCell>
+                  <div className="flex flex-col gap-1">
+                    <span className="font-medium text-slate-800">{project.projectName}</span>
+                    <span className="text-xs text-slate-500 md:hidden">
+                      {project.projectProvider} · {project.projectSlug}
+                    </span>
+                  </div>
+                </TableCell>
+                <TableCell className="hidden md:table-cell text-slate-500">
+                  {project.projectProvider} · {project.projectSlug}
+                </TableCell>
+                <TableCell className="text-right">{project.requests.toLocaleString('en-US')}</TableCell>
+                <TableCell className="text-right">{formatCompact(project.totalTokens)}</TableCell>
+                <TableCell className="hidden md:table-cell text-right">{(project.cachedShare * 100).toFixed(1)}%</TableCell>
+                <TableCell className="text-right">{formatCurrency(project.cost)}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       </CardContent>
     </Card>
   )
@@ -702,6 +842,16 @@ type LegendStatsProps = {
     label: string
     value: string
   }>
+}
+
+type ProjectFilterChipProps = {
+  availableProjects: DashboardSnapshot['projects']['available']
+  onChange: (projectIds: string[]) => void
+  selectedProjectIds: string[]
+}
+
+type ProjectBreakdownCardProps = {
+  projects: DashboardProjectSummary[]
 }
 
 type DashboardTab = 'overview' | 'models' | 'cost'
