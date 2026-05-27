@@ -58,6 +58,9 @@ type SnapshotBuildInput = {
   dailyRows: DashboardDailyRow[]
   environment: string
   generatedAt: string
+  granularity?: DashboardBucketGranularity
+  hourlyModelRowsByDay?: DashboardModelDailyUsage[]
+  hourlyRows?: DashboardDailyRow[]
   issues: DashboardIssue[]
   issuesByDay?: DashboardIssueByDay[]
   models: DashboardModelSummary[]
@@ -69,10 +72,13 @@ type SnapshotBuildInput = {
   workspaceName?: string
 }
 
+export type DashboardBucketGranularity = 'day' | 'hour'
+
 const MODEL_COLORS = ['#2563eb', '#7c3aed', '#0f766e', '#db2777', '#ea580c', '#0891b2']
 
 export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSnapshot {
-  const aggregatedDailyRows = summarizeDailyRowsByDay(input.dailyRows)
+  const granularity = input.granularity || 'day'
+  const aggregatedDailyRows = summarizeRowsByBucket(input.dailyRows)
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
       accumulator.cachedTokens += row.cachedTokens
@@ -103,6 +109,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const topModel = modelRows.at(0)
   const topDayByTokens = [...aggregatedDailyRows].sort((left, right) => right.totalTokens - left.totalTokens).at(0)
   const topDayByCost = [...aggregatedDailyRows].sort((left, right) => right.cost - left.cost).at(0)
+  const bucketLabel = granularity === 'hour' ? 'hour' : 'day'
   const availableStartDay = aggregatedDailyRows[0]?.day || ''
   const availableEndDay = aggregatedDailyRows.at(-1)?.day || ''
   const availableProjects = resolveAvailableProjects(input.availableProjects, input.dailyRows)
@@ -116,12 +123,12 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         ? `${topModel.model} drove the most volume with ${formatCompactNumber(topModel.tokens)} tokens across the selected window.`
         : 'No model-level usage was returned for this window.',
       topDayByTokens
-        ? `${formatDay(topDayByTokens.day)} was the busiest day at ${formatCompactNumber(topDayByTokens.totalTokens)} total tokens.`
-        : 'No daily token data was returned for this window.',
+        ? `${formatDay(topDayByTokens.day)} was the busiest ${bucketLabel} at ${formatCompactNumber(topDayByTokens.totalTokens)} total tokens.`
+        : `No ${bucketLabel}-level token data was returned for this window.`,
       projectBreakdown.length > 1
         ? `${projectBreakdown[0].projectName} led the selected project set with ${formatCompactNumber(projectBreakdown[0].totalTokens)} tokens.`
         : topDayByCost && topDayByCost.cost > 0
-          ? `${formatDay(topDayByCost.day)} carried the highest tracked cost at $${topDayByCost.cost.toFixed(2)}.`
+          ? `${formatDay(topDayByCost.day)} carried the highest tracked cost for any ${bucketLabel} at $${topDayByCost.cost.toFixed(2)}.`
           : `Source label: ${input.sourceLabel}.`,
     ],
     charts: {
@@ -152,6 +159,8 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       availableProjects,
       availableStartDay,
       dailyRows: input.dailyRows,
+      hourlyModelRowsByDay: input.hourlyModelRowsByDay,
+      hourlyRows: input.hourlyRows,
       issuesByDay: input.issuesByDay || input.issues.map((issue) => ({ ...issue, ...EMPTY_PROJECT, day: availableEndDay })),
       modelRowsByDay:
         input.modelRowsByDay ||
@@ -169,7 +178,8 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     headline: {
       environment: input.environment,
       generatedAt: input.generatedAt,
-      rangeLabel: input.rangeLabel || `Last ${aggregatedDailyRows.length} days`,
+      granularity,
+      rangeLabel: input.rangeLabel || `Last ${aggregatedDailyRows.length} ${granularity === 'hour' ? 'hours' : 'days'}`,
       sourceLabel: input.sourceLabel,
       summary:
         input.statusNote ||
@@ -221,7 +231,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       outputTokens: row.outputTokens,
       requests: row.requests,
       totalTokens: row.totalTokens,
-      traceId: row.day.replaceAll('-', '').slice(2),
+      traceId: normalizeTraceId(row.day),
     })),
   }
 }
@@ -328,6 +338,7 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
     headline: {
       environment: 'Configuration required',
       generatedAt: new Date().toISOString(),
+      granularity: 'day',
       rangeLabel: 'Last 14 days',
       sourceLabel: 'Fallback sample data',
       summary: reason,
@@ -387,7 +398,7 @@ const EMPTY_PROJECT: DashboardProjectOption = {
   projectSlug: 'unknown-project',
 }
 
-function summarizeDailyRowsByDay(rows: DashboardDailyRow[]) {
+function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   const dayMap = new Map<string, DashboardDailyRow>()
 
   for (const row of rows) {
@@ -536,12 +547,21 @@ export function calculateCachedShare(
 }
 
 function formatDay(value: string) {
+  const isTimestamp = value.includes('T')
+  const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
+
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
+    hour: isTimestamp ? 'numeric' : undefined,
+    minute: isTimestamp ? '2-digit' : undefined,
     month: 'short',
     timeZone: 'UTC',
     year: 'numeric',
-  }).format(new Date(`${value}T00:00:00Z`))
+  }).format(date)
+}
+
+function normalizeTraceId(value: string) {
+  return value.replace(/[^0-9A-Za-z]/g, '').slice(-12) || 'window'
 }
 
 export type DashboardSnapshot = {
@@ -581,6 +601,8 @@ export type DashboardSnapshot = {
     availableProjects: DashboardProjectOption[]
     availableStartDay: string
     dailyRows: DashboardDailyRow[]
+    hourlyModelRowsByDay?: DashboardModelDailyUsage[]
+    hourlyRows?: DashboardDailyRow[]
     issuesByDay: DashboardIssueByDay[]
     modelRowsByDay: DashboardModelDailyUsage[]
     selectedProjectIds: string[]
@@ -588,6 +610,7 @@ export type DashboardSnapshot = {
   headline: {
     environment: string
     generatedAt: string
+    granularity: DashboardBucketGranularity
     rangeLabel: string
     sourceLabel: string
     summary: string

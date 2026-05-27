@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import sqlite3
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -157,6 +158,93 @@ def test_build_payload_aggregates_tokens_costs_and_models(tmp_path):
     assert [model["model"] for model in day["models"]] == ["gpt-5.4", "claude-sonnet-4"]
     assert day["models"][0]["tokens"] == 175
     assert day["models"][1]["estimatedCostUsd"] == 0.5
+
+
+def test_build_payload_includes_hourly_rollups_for_recent_usage(tmp_path):
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            source TEXT,
+            model TEXT,
+            started_at REAL,
+            ended_at REAL,
+            api_call_count INTEGER DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            reasoning_tokens INTEGER DEFAULT 0,
+            estimated_cost_usd REAL,
+            actual_cost_usd REAL
+        )
+        """
+    )
+    now = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+    first_hour = now - timedelta(hours=2)
+    second_hour = now - timedelta(hours=1)
+    rows = [
+        (
+            "recent-1",
+            "slack",
+            "gpt-5.4",
+            first_hour.timestamp(),
+            (first_hour + timedelta(minutes=15)).timestamp(),
+            4,
+            120,
+            60,
+            10,
+            5,
+            0,
+            1.2,
+            None,
+        ),
+        (
+            "recent-2",
+            "cli",
+            "claude-sonnet-4",
+            second_hour.timestamp(),
+            (second_hour + timedelta(minutes=20)).timestamp(),
+            3,
+            90,
+            30,
+            20,
+            0,
+            0,
+            0.8,
+            None,
+        ),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO sessions (
+            id, source, model, started_at, ended_at, api_call_count,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+            reasoning_tokens, estimated_cost_usd, actual_cost_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+    conn.commit()
+    conn.close()
+
+    payload = build_payload(_config(db_path))
+
+    usage_dates = [row["usageDate"] for row in payload["rollups"]]
+    expected_day = now.date().isoformat()
+    expected_hours = [
+        first_hour.isoformat().replace("+00:00", "Z")[:13] + ":00:00Z",
+        second_hour.isoformat().replace("+00:00", "Z")[:13] + ":00:00Z",
+    ]
+
+    assert expected_day in usage_dates
+    assert all(hour in usage_dates for hour in expected_hours)
+
+    hourly_rows = [row for row in payload["rollups"] if "T" in row["usageDate"]]
+    assert len(hourly_rows) == 2
+    assert [row["models"][0]["model"] for row in hourly_rows] == ["gpt-5.4", "claude-sonnet-4"]
 
 
 def test_diagnose_config_reports_missing_ingest_settings(tmp_path):
