@@ -27,6 +27,7 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
+import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
 import type { TimeframePreset, TimeframeSelection } from '#/lib/dashboard-timeframe'
@@ -51,6 +52,10 @@ function Home() {
   const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
+  const agentDataStatus = useMemo(
+    () => getAgentDataStatus(activeSnapshot.headline.generatedAt),
+    [activeSnapshot.headline.generatedAt],
+  )
 
   return (
     <main className="dashboard-shell">
@@ -64,8 +69,13 @@ function Home() {
                 <p className="max-w-3xl text-sm text-slate-600">{activeSnapshot.headline.summary}</p>
               </div>
               <div className="dashboard-header-actions">
-                <Badge className="rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
-                  <Activity className="mr-1 size-3.5" />
+                <Badge
+                  aria-label={`${activeSnapshot.headline.sourceLabel}. ${agentDataStatus.detail}`}
+                  className={`dashboard-status-badge dashboard-status-${agentDataStatus.level}`}
+                  title={agentDataStatus.detail}
+                  variant="secondary"
+                >
+                  <span aria-hidden className="dashboard-status-dot" />
                   {activeSnapshot.headline.sourceLabel}
                 </Badge>
                 <Button className="dashboard-feedback-button" onClick={() => window.location.reload()} variant="outline">

@@ -435,7 +435,7 @@ async function loadSnapshotFromD1(
     projectProvider: workspace.provider,
     projectSlug: workspace.slug,
   }))
-  const latestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), Date.now())
+  const latestCreatedAt = Math.max(...rows.map((row) => row.createdAt || 0), 0)
 
   return buildSnapshotFromRollups({
     availableProjects,
