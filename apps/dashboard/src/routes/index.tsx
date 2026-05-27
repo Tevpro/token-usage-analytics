@@ -3,14 +3,7 @@ import type { ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import {
-  Activity,
-  ArrowUpRight,
-  Bot,
-  CalendarRange,
-  RefreshCcw,
-  Search,
-} from 'lucide-react'
+import { Activity, ArrowUpRight, Bot, CalendarRange, RefreshCcw } from 'lucide-react'
 
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
@@ -160,15 +153,6 @@ function Home() {
           ) : null}
         </div>
 
-        <label className="toolbar-search">
-          <Search className="size-4 text-slate-400" />
-          <Input
-            aria-label="Search spans, users, tags, and more"
-            className="border-0 bg-transparent shadow-none focus-visible:ring-0"
-            defaultValue=""
-            placeholder="Search, filter, and extend from here"
-          />
-        </label>
       </section>
 
       <section className="kpi-grid">
