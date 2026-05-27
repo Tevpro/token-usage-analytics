@@ -2,6 +2,7 @@ import type { CloudflareAppEnv } from '#/lib/runtime'
 import type {
   DashboardIssueByDay,
   DashboardModelDailyUsage,
+  DashboardProjectOption,
   DashboardSnapshot,
 } from '#/lib/token-analytics'
 import {
@@ -10,7 +11,7 @@ import {
   calculateCachedShare,
 } from '#/lib/token-analytics'
 
-type DailyRollupRow = {
+type DailyRollupRow = DashboardProjectOption & {
   cachedTokens: number
   cost: number
   createdAt: number
@@ -30,11 +31,12 @@ type ModelSummaryRow = {
   tokens: number
 }
 
-type ModelUsageRow = ModelSummaryRow & {
-  day: string
-}
+type ModelUsageRow = DashboardProjectOption &
+  ModelSummaryRow & {
+    day: string
+  }
 
-type IssueRow = {
+type IssueRow = DashboardProjectOption & {
   count: number
   day: string
   severity: 'high' | 'medium' | 'low'
@@ -155,18 +157,18 @@ const FRESHNESS_WINDOW_MS = 2 * 60 * 60 * 1000
 const OPENAI_PROVIDER = 'OpenAI'
 
 export async function loadDashboardSnapshotForRequest(env: CloudflareAppEnv): Promise<SnapshotLoadResult> {
-  const selectedWorkspace = await selectDashboardWorkspace(env)
-  if (selectedWorkspace) {
-    const snapshot = await loadSnapshotFromD1(env, selectedWorkspace)
+  const selectedWorkspaces = await selectDashboardWorkspaces(env)
+  if (selectedWorkspaces.length > 0) {
+    const snapshot = await loadSnapshotFromD1(env, selectedWorkspaces)
     return { snapshot }
   }
 
   if (env.OPENAI_API_KEY) {
     try {
       const syncResult = await syncOpenAiUsageToD1(env)
-      const workspace = await selectDashboardWorkspace(env, getOpenAiWorkspaceConfig(env).slug)
-      if (workspace) {
-        const snapshot = await loadSnapshotFromD1(env, workspace, syncResult.sourceLabel)
+      const workspaces = await selectDashboardWorkspaces(env, getOpenAiWorkspaceConfig(env).slug)
+      if (workspaces.length > 0) {
+        const snapshot = await loadSnapshotFromD1(env, workspaces, syncResult.sourceLabel)
         return { snapshot, syncResult }
       }
     } catch (error) {
@@ -412,85 +414,76 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
 
 async function loadSnapshotFromD1(
   env: CloudflareAppEnv,
-  selection: WorkspaceSelection,
-  sourceLabel = buildSourceLabel(selection.workspace.provider, selection.latestCreatedAt),
+  selections: WorkspaceSelection[],
+  sourceLabel = buildCombinedSourceLabel(selections),
 ): Promise<DashboardSnapshot> {
-  const rows = await loadDailyRollups(env.DB, selection.workspace.id, getDaysBack(env))
+  const workspaceIds = selections.map((selection) => selection.workspace.id)
+  const rows = await loadDailyRollups(env.DB, workspaceIds, getDaysBack(env))
 
   if (rows.length === 0) {
-    return buildFallbackDashboardSnapshot('No D1 rollups were found for the selected workspace.')
+    return buildFallbackDashboardSnapshot('No D1 rollups were found for the selected projects.')
   }
 
   const firstDay = rows[0].day
   const lastDay = rows[rows.length - 1].day
-  const models = await loadModelSummary(env.DB, selection.workspace.id, firstDay, lastDay)
-  const modelRowsByDay = await loadModelUsageByDay(env.DB, selection.workspace.id, firstDay, lastDay)
-  const issuesByDay = await loadIssues(env.DB, selection.workspace.id, firstDay, lastDay)
+  const models = await loadModelSummary(env.DB, workspaceIds, firstDay, lastDay)
+  const modelRowsByDay = await loadModelUsageByDay(env.DB, workspaceIds, firstDay, lastDay)
+  const issuesByDay = await loadIssues(env.DB, workspaceIds, firstDay, lastDay)
+  const availableProjects = selections.map(({ workspace }) => ({
+    projectId: workspace.id,
+    projectName: workspace.name,
+    projectProvider: workspace.provider,
+    projectSlug: workspace.slug,
+  }))
+  const latestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), Date.now())
 
   return buildSnapshotFromRollups({
+    availableProjects,
     dailyRows: rows,
     environment: rows[rows.length - 1].environment,
-    generatedAt: new Date(selection.latestCreatedAt || Date.now()).toISOString(),
+    generatedAt: new Date(latestCreatedAt).toISOString(),
     issues: summarizeIssues(issuesByDay),
     issuesByDay,
     models,
     modelRowsByDay,
+    selectedProjectIds: availableProjects.map((project) => project.projectId),
     sourceLabel,
-    statusNote: buildStatusNote(selection.workspace.provider, selection.latestCreatedAt, selection.latestDay),
-    workspaceName: selection.workspace.name,
+    statusNote: buildCombinedStatusNote(selections),
+    workspaceName: availableProjects.length === 1 ? availableProjects[0].projectName : 'All projects',
   })
 }
 
-async function selectDashboardWorkspace(
+async function selectDashboardWorkspaces(
   env: CloudflareAppEnv,
-  slugOverride?: string,
-): Promise<WorkspaceSelection | null> {
-  const slug = slugOverride || env.DASHBOARD_WORKSPACE_SLUG
-  const db = env.DB
+  preferredSlug?: string,
+): Promise<WorkspaceSelection[]> {
+  const slug = preferredSlug || env.DASHBOARD_WORKSPACE_SLUG || ''
+  const rows = await env.DB
+    .prepare(
+      `SELECT workspaces.id as id,
+              workspaces.slug as slug,
+              workspaces.name as name,
+              workspaces.provider as provider,
+              MAX(daily_usage_rollups.created_at) as latestCreatedAt,
+              MAX(daily_usage_rollups.usage_date) as latestDay
+       FROM workspaces
+       INNER JOIN daily_usage_rollups ON daily_usage_rollups.workspace_id = workspaces.id
+       GROUP BY workspaces.id, workspaces.slug, workspaces.name, workspaces.provider
+       ORDER BY CASE WHEN ? != '' AND workspaces.slug = ? THEN 0 ELSE 1 END,
+                MAX(daily_usage_rollups.created_at) DESC,
+                workspaces.name ASC`,
+    )
+    .bind(slug, slug)
+    .all<{
+      id: string
+      latestCreatedAt: number
+      latestDay: string
+      name: string
+      provider: string
+      slug: string
+    }>()
 
-  const query = slug
-    ? db
-        .prepare(
-          `SELECT workspaces.id as id,
-                  workspaces.slug as slug,
-                  workspaces.name as name,
-                  workspaces.provider as provider,
-                  MAX(daily_usage_rollups.created_at) as latestCreatedAt,
-                  MAX(daily_usage_rollups.usage_date) as latestDay
-           FROM workspaces
-           INNER JOIN daily_usage_rollups ON daily_usage_rollups.workspace_id = workspaces.id
-           WHERE workspaces.slug = ?
-           GROUP BY workspaces.id, workspaces.slug, workspaces.name, workspaces.provider
-           LIMIT 1`,
-        )
-        .bind(slug)
-    : db.prepare(
-        `SELECT workspaces.id as id,
-                workspaces.slug as slug,
-                workspaces.name as name,
-                workspaces.provider as provider,
-                daily_usage_rollups.created_at as latestCreatedAt,
-                daily_usage_rollups.usage_date as latestDay
-         FROM daily_usage_rollups
-         INNER JOIN workspaces ON workspaces.id = daily_usage_rollups.workspace_id
-         ORDER BY daily_usage_rollups.created_at DESC, daily_usage_rollups.usage_date DESC
-         LIMIT 1`,
-      )
-
-  const row = await query.first<{
-    id: string
-    latestCreatedAt: number
-    latestDay: string
-    name: string
-    provider: string
-    slug: string
-  }>()
-
-  if (!row) {
-    return null
-  }
-
-  return {
+  return rows.results.map((row) => ({
     latestCreatedAt: row.latestCreatedAt,
     latestDay: row.latestDay,
     workspace: {
@@ -499,7 +492,7 @@ async function selectDashboardWorkspace(
       provider: row.provider,
       slug: row.slug,
     },
-  }
+  }))
 }
 
 async function dbEnsureWorkspace(db: D1Database, workspace: WorkspaceRecord) {
@@ -516,31 +509,47 @@ async function dbEnsureWorkspace(db: D1Database, workspace: WorkspaceRecord) {
     .run()
 }
 
-async function loadDailyRollups(db: D1Database, workspaceId: string, daysBack: number) {
+async function loadDailyRollups(db: D1Database, workspaceIds: string[], daysBack: number) {
+  if (workspaceIds.length === 0) {
+    return [] satisfies DailyRollupRow[]
+  }
+
+  const startDay = shiftUtcDay(formatUtcDay(new Date()), -(daysBack - 1))
+  const placeholders = workspaceIds.map(() => '?').join(', ')
   const result = await db
     .prepare(
       `SELECT
-         usage_date as day,
-         environment,
-         requests,
-         total_tokens as totalTokens,
-         input_tokens as inputTokens,
-         output_tokens as outputTokens,
-         cached_tokens as cachedTokens,
-         estimated_cost_usd as cost,
-         created_at as createdAt
+         daily_usage_rollups.usage_date as day,
+         daily_usage_rollups.environment as environment,
+         daily_usage_rollups.requests as requests,
+         daily_usage_rollups.total_tokens as totalTokens,
+         daily_usage_rollups.input_tokens as inputTokens,
+         daily_usage_rollups.output_tokens as outputTokens,
+         daily_usage_rollups.cached_tokens as cachedTokens,
+         daily_usage_rollups.estimated_cost_usd as cost,
+         daily_usage_rollups.created_at as createdAt,
+         workspaces.id as projectId,
+         workspaces.name as projectName,
+         workspaces.provider as projectProvider,
+         workspaces.slug as projectSlug
        FROM daily_usage_rollups
-       WHERE workspace_id = ?
-       ORDER BY usage_date DESC
-       LIMIT ?`,
+       INNER JOIN workspaces ON workspaces.id = daily_usage_rollups.workspace_id
+       WHERE daily_usage_rollups.workspace_id IN (${placeholders})
+         AND daily_usage_rollups.usage_date >= ?
+       ORDER BY daily_usage_rollups.usage_date ASC, workspaces.name ASC`,
     )
-    .bind(workspaceId, daysBack)
+    .bind(...workspaceIds, startDay)
     .all<DailyRollupRow>()
 
-  return [...result.results].reverse()
+  return result.results
 }
 
-async function loadModelSummary(db: D1Database, workspaceId: string, startDay: string, endDay: string) {
+async function loadModelSummary(db: D1Database, workspaceIds: string[], startDay: string, endDay: string) {
+  if (workspaceIds.length === 0) {
+    return [] satisfies ModelSummaryRow[]
+  }
+
+  const placeholders = workspaceIds.map(() => '?').join(', ')
   const result = await db
     .prepare(
       `SELECT
@@ -551,18 +560,23 @@ async function loadModelSummary(db: D1Database, workspaceId: string, startDay: s
          SUM(model_daily_usage.estimated_cost_usd) as cost
        FROM model_daily_usage
        INNER JOIN daily_usage_rollups ON daily_usage_rollups.id = model_daily_usage.rollup_id
-       WHERE daily_usage_rollups.workspace_id = ?
+       WHERE daily_usage_rollups.workspace_id IN (${placeholders})
          AND daily_usage_rollups.usage_date BETWEEN ? AND ?
        GROUP BY model_daily_usage.model, model_daily_usage.provider
        ORDER BY tokens DESC`,
     )
-    .bind(workspaceId, startDay, endDay)
+    .bind(...workspaceIds, startDay, endDay)
     .all<ModelSummaryRow>()
 
   return result.results
 }
 
-async function loadModelUsageByDay(db: D1Database, workspaceId: string, startDay: string, endDay: string) {
+async function loadModelUsageByDay(db: D1Database, workspaceIds: string[], startDay: string, endDay: string) {
+  if (workspaceIds.length === 0) {
+    return [] satisfies DashboardModelDailyUsage[]
+  }
+
+  const placeholders = workspaceIds.map(() => '?').join(', ')
   const result = await db
     .prepare(
       `SELECT
@@ -571,29 +585,41 @@ async function loadModelUsageByDay(db: D1Database, workspaceId: string, startDay
          model_daily_usage.provider as provider,
          model_daily_usage.requests as requests,
          model_daily_usage.tokens as tokens,
-         model_daily_usage.estimated_cost_usd as cost
+         model_daily_usage.estimated_cost_usd as cost,
+         workspaces.id as projectId,
+         workspaces.name as projectName,
+         workspaces.provider as projectProvider,
+         workspaces.slug as projectSlug
        FROM model_daily_usage
        INNER JOIN daily_usage_rollups ON daily_usage_rollups.id = model_daily_usage.rollup_id
-       WHERE daily_usage_rollups.workspace_id = ?
+       INNER JOIN workspaces ON workspaces.id = daily_usage_rollups.workspace_id
+       WHERE daily_usage_rollups.workspace_id IN (${placeholders})
          AND daily_usage_rollups.usage_date BETWEEN ? AND ?
        ORDER BY daily_usage_rollups.usage_date ASC, model_daily_usage.tokens DESC`,
     )
-    .bind(workspaceId, startDay, endDay)
+    .bind(...workspaceIds, startDay, endDay)
     .all<ModelUsageRow>()
 
   return result.results satisfies DashboardModelDailyUsage[]
 }
 
-async function loadIssues(db: D1Database, workspaceId: string, startDay: string, endDay: string) {
+async function loadIssues(db: D1Database, workspaceIds: string[], startDay: string, endDay: string) {
+  if (workspaceIds.length === 0) {
+    return [] satisfies IssueRow[]
+  }
+
+  const placeholders = workspaceIds.map(() => '?').join(', ')
   const result = await db
     .prepare(
-      `SELECT usage_date as day, title, count, severity
+      `SELECT issue_events.usage_date as day, issue_events.title as title, issue_events.count as count, issue_events.severity as severity,
+              workspaces.id as projectId, workspaces.name as projectName, workspaces.provider as projectProvider, workspaces.slug as projectSlug
        FROM issue_events
-       WHERE workspace_id = ?
-         AND usage_date BETWEEN ? AND ?
-       ORDER BY occurred_at DESC`,
+       INNER JOIN workspaces ON workspaces.id = issue_events.workspace_id
+       WHERE issue_events.workspace_id IN (${placeholders})
+         AND issue_events.usage_date BETWEEN ? AND ?
+       ORDER BY issue_events.occurred_at DESC`,
     )
-    .bind(workspaceId, startDay, endDay)
+    .bind(...workspaceIds, startDay, endDay)
     .all<IssueRow>()
 
   return result.results
@@ -831,8 +857,39 @@ function buildSourceLabel(provider: string, createdAt: number) {
   return `${Date.now() - createdAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'} ${provider} data`
 }
 
+function buildCombinedSourceLabel(selections: WorkspaceSelection[]) {
+  if (selections.length === 0) {
+    return 'Cached project data'
+  }
+
+  if (selections.length === 1) {
+    const selection = selections[0]
+    return buildSourceLabel(selection.workspace.provider, selection.latestCreatedAt)
+  }
+
+  const providers = [...new Set(selections.map((selection) => selection.workspace.provider))]
+  const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
+  const freshness = Date.now() - freshestCreatedAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'
+  return providers.length === 1 ? `${freshness} ${providers[0]} project data` : `${freshness} multi-source project data`
+}
+
 function buildStatusNote(provider: string, createdAt: number, latestDay: string) {
   return `${provider} rollups last updated ${formatRelativeAge(createdAt)} and served from Cloudflare D1. Latest rollup date: ${latestDay}.`
+}
+
+function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
+  if (selections.length === 0) {
+    return 'No project rollups were found in Cloudflare D1.'
+  }
+
+  if (selections.length === 1) {
+    const selection = selections[0]
+    return buildStatusNote(selection.workspace.provider, selection.latestCreatedAt, selection.latestDay)
+  }
+
+  const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
+  const latestDay = [...selections.map((selection) => selection.latestDay)].sort().at(-1) || 'n/a'
+  return `${selections.length} projects are contributing rollups from Cloudflare D1. Last refresh ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${latestDay}.`
 }
 
 function formatRelativeAge(timestamp: number) {
