@@ -488,11 +488,11 @@ function ProjectFilterChip({
   const selectedLabel =
     selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjects.length
       ? availableProjects.length === 1
-        ? availableProjects[0]?.projectName || 'Project'
-        : 'All projects'
+        ? availableProjects[0]?.projectName || 'Agent'
+        : 'All agents'
       : selectedProjectIds.length === 1
-        ? availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected project'
-        : `${selectedProjectIds.length} selected projects`
+        ? availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected agent'
+        : `${selectedProjectIds.length} selected agents`
 
   const toggleProject = (projectId: string) => {
     if (selectedProjectIds.length === 0) {
@@ -522,8 +522,8 @@ function ProjectFilterChip({
       <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 min-w-[280px] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-semibold text-slate-900">Projects</p>
-            <p className="text-xs text-slate-500">Select one or more projects to compare or roll up.</p>
+            <p className="text-sm font-semibold text-slate-900">Agents</p>
+            <p className="text-xs text-slate-500">Select one or more agents to compare or roll up.</p>
           </div>
           <Button onClick={() => onChange([])} size="sm" type="button" variant="ghost">
             All
@@ -568,9 +568,9 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
     <Card className="panel-card overflow-hidden">
       <CardHeader className="panel-header-row">
         <div>
-          <CardTitle className="panel-title">Project breakdown</CardTitle>
+          <CardTitle className="panel-title">Agent breakdown</CardTitle>
           <p className="mt-1 text-sm text-slate-500">
-            Compare combined usage against the individual projects contributing to this window.
+            Compare combined usage against the individual agents contributing to this window.
           </p>
         </div>
       </CardHeader>
@@ -578,7 +578,7 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Project</TableHead>
+              <TableHead>Agent</TableHead>
               <TableHead className="hidden md:table-cell">Identifier</TableHead>
               <TableHead className="text-right">Requests</TableHead>
               <TableHead className="text-right">Tokens</TableHead>

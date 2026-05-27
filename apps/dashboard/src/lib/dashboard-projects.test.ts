@@ -46,7 +46,7 @@ describe('filterSnapshotByProjects', () => {
   it('keeps combined totals when all projects are selected implicitly', () => {
     const filtered = filterSnapshotByProjects(baseSnapshot, [])
 
-    expect(filtered.headline.workspace).toBe('All projects')
+    expect(filtered.headline.workspace).toBe('All agents')
     expect(filtered.table[0]).toMatchObject({ requests: 10, totalTokens: 1000 })
     expect(filtered.projects.breakdown).toHaveLength(2)
   })

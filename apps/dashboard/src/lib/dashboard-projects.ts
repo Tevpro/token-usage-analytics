@@ -46,14 +46,14 @@ function normalizeSelectedProjectIds(availableProjects: DashboardProjectOption[]
 
 function summarizeProjectSelection(availableProjects: DashboardProjectOption[], selectedProjectIds: string[]) {
   if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjects.length) {
-    return availableProjects.length === 1 ? availableProjects[0]?.projectName || 'Project' : 'All projects'
+    return availableProjects.length === 1 ? availableProjects[0]?.projectName || 'Agent' : 'All agents'
   }
 
   if (selectedProjectIds.length === 1) {
-    return availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected project'
+    return availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected agent'
   }
 
-  return `${selectedProjectIds.length} selected projects`
+  return `${selectedProjectIds.length} selected agents`
 }
 
 function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelSummary[] {
