@@ -56,6 +56,9 @@ function Home() {
     () => getAgentDataStatus(activeSnapshot.headline.generatedAt),
     [activeSnapshot.headline.generatedAt],
   )
+  const bucketLabel = activeSnapshot.headline.granularity === 'hour' ? 'Hourly' : 'Daily'
+  const bucketColumnLabel = activeSnapshot.headline.granularity === 'hour' ? 'Time' : 'Day'
+  const costChartTitle = activeSnapshot.headline.granularity === 'hour' ? 'Allocated hourly cost' : 'Allocated daily cost'
 
   return (
     <main className="dashboard-shell">
@@ -244,9 +247,11 @@ function Home() {
           <Card className="panel-card overflow-hidden daily-rollups-card">
             <CardHeader className="panel-header-row">
               <div>
-                <CardTitle className="panel-title">Daily rollups</CardTitle>
+                <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
                 <p className="mt-1 text-sm text-slate-500">
-                  Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.
+                  {activeSnapshot.headline.granularity === 'hour'
+                    ? 'Hourly buckets expose the last 24 hours of request, token, cache, and allocated cost activity for faster troubleshooting.'
+                    : 'Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.'}
                 </p>
               </div>
               <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
@@ -259,7 +264,7 @@ function Home() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
-                    <TableHead>Day</TableHead>
+                    <TableHead>{bucketColumnLabel}</TableHead>
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Total Tokens</TableHead>
                     <TableHead className="hidden lg:table-cell text-right">Input</TableHead>
@@ -274,7 +279,7 @@ function Home() {
                       <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
-                          <span>{formatDay(row.day)}</span>
+                          <span>{formatBucketLabel(row.day)}</span>
                           <span className="text-xs text-slate-500 sm:hidden">{row.traceId}</span>
                         </div>
                       </TableCell>
@@ -341,7 +346,7 @@ function Home() {
                   }))}
                 />
               }
-              title="Allocated daily cost"
+              title={costChartTitle}
             >
               <CostBars data={activeSnapshot.charts.costByDay} />
             </ChartCard>
@@ -373,7 +378,7 @@ function Home() {
               <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
             </ChartCard>
 
-            <ChartCard title="Allocated daily cost">
+            <ChartCard title={costChartTitle}>
               <CostBars data={activeSnapshot.charts.costByDay} />
             </ChartCard>
           </section>
@@ -383,9 +388,9 @@ function Home() {
           <Card className="panel-card overflow-hidden daily-rollups-card">
             <CardHeader className="panel-header-row">
               <div>
-                <CardTitle className="panel-title">Daily rollups</CardTitle>
+                <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
                 <p className="mt-1 text-sm text-slate-500">
-                  Review the daily request, token, cache, and cost totals behind the current cost window.
+                  Review the request, token, cache, and cost totals behind the current cost window.
                 </p>
               </div>
             </CardHeader>
@@ -394,7 +399,7 @@ function Home() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
-                    <TableHead>Day</TableHead>
+                    <TableHead>{bucketColumnLabel}</TableHead>
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Total Tokens</TableHead>
                     <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
@@ -405,7 +410,7 @@ function Home() {
                   {activeSnapshot.table.map((row) => (
                     <TableRow key={`${row.traceId}:cost`}>
                       <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
-                      <TableCell>{formatDay(row.day)}</TableCell>
+                      <TableCell>{formatBucketLabel(row.day)}</TableCell>
                       <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
                       <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
                       <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
@@ -792,21 +797,31 @@ function formatModelLabel(model: string, provider: string) {
   return provider ? `${provider} · ${model}` : model
 }
 
-function formatDay(value: string) {
+function formatBucketLabel(value: string) {
+  const isTimestamp = value.includes('T')
+  const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
+
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
+    hour: isTimestamp ? 'numeric' : undefined,
+    minute: isTimestamp ? '2-digit' : undefined,
     month: 'short',
     timeZone: 'UTC',
     year: 'numeric',
-  }).format(new Date(`${value}T00:00:00Z`))
+  }).format(date)
 }
 
 function formatDayShort(value: string) {
+  const isTimestamp = value.includes('T')
+  const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
+
   return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
+    day: isTimestamp ? undefined : 'numeric',
+    hour: isTimestamp ? 'numeric' : undefined,
+    minute: isTimestamp ? '2-digit' : undefined,
+    month: isTimestamp ? undefined : 'short',
     timeZone: 'UTC',
-  }).format(new Date(`${value}T00:00:00Z`))
+  }).format(date)
 }
 
 function toPolylinePoints(values: number[]) {

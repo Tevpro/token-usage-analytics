@@ -1,11 +1,45 @@
 import { describe, expect, it } from 'vitest'
 
-import { ingestExternalRollupsToD1 } from '#/lib/openai-usage'
+import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
+import { ingestExternalRollupsToD1, loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
 import type { CloudflareAppEnv } from '#/lib/runtime'
 
 type BoundStatement = {
   params: unknown[]
   sql: string
+}
+
+type WorkspaceRow = {
+  createdAt: number
+  id: string
+  name: string
+  provider: string
+  slug: string
+}
+
+type DailyRollupStoredRow = {
+  cachedTokens: number
+  cost: number
+  createdAt: number
+  day: string
+  environment: string
+  id: string
+  inputTokens: number
+  outputTokens: number
+  p95LatencyMs: number
+  projectId: string
+  requests: number
+  totalTokens: number
+}
+
+type ModelUsageStoredRow = {
+  cost: number
+  id: string
+  model: string
+  provider: string
+  requests: number
+  rollupId: string
+  tokens: number
 }
 
 class FakePreparedStatement {
@@ -19,8 +53,13 @@ class FakePreparedStatement {
     return new FakePreparedStatement(this.db, this.sql, params)
   }
 
+  async all<T>() {
+    return { results: this.db.selectAll(this.sql, this.params) as T[] }
+  }
+
   async run() {
     this.db.runs.push({ params: this.params, sql: this.sql })
+    this.db.apply(this.sql, this.params)
     return { success: true }
   }
 }
@@ -28,6 +67,9 @@ class FakePreparedStatement {
 class FakeD1Database {
   runs: BoundStatement[] = []
   batches: BoundStatement[][] = []
+  workspaces = new Map<string, WorkspaceRow>()
+  dailyRollups: DailyRollupStoredRow[] = []
+  modelDailyUsage: ModelUsageStoredRow[] = []
 
   prepare(sql: string) {
     return new FakePreparedStatement(this, sql)
@@ -39,6 +81,173 @@ class FakeD1Database {
       sql: statement.sql,
     }))
     this.batches.push(batch)
+    for (const statement of statements) {
+      this.apply(statement.sql, statement.params)
+    }
+    return []
+  }
+
+  apply(sql: string, params: unknown[]) {
+    if (sql.includes('INSERT INTO workspaces')) {
+      const [id, slug, name, provider, createdAt] = params as [string, string, string, string, number]
+      this.workspaces.set(id, { createdAt, id, name, provider, slug })
+      return
+    }
+
+    if (sql.includes('DELETE FROM daily_usage_rollups')) {
+      const [workspaceId, startDay, endDay] = params as [string, string, string]
+      const removedIds = new Set(
+        this.dailyRollups
+          .filter((row) => row.projectId === workspaceId && row.day >= startDay && row.day <= endDay)
+          .map((row) => row.id),
+      )
+      this.dailyRollups = this.dailyRollups.filter((row) => !removedIds.has(row.id))
+      this.modelDailyUsage = this.modelDailyUsage.filter((row) => !removedIds.has(row.rollupId))
+      return
+    }
+
+    if (sql.includes('DELETE FROM issue_events')) {
+      return
+    }
+
+    if (sql.includes('INSERT INTO daily_usage_rollups')) {
+      const [id, workspaceId, day, environment, requests, totalTokens, inputTokens, outputTokens, cachedTokens, cost, , , p95LatencyMs, createdAt] =
+        params as [string, string, string, string, number, number, number, number, number, number, number, number, number, number]
+      this.dailyRollups.push({
+        cachedTokens,
+        cost,
+        createdAt,
+        day,
+        environment,
+        id,
+        inputTokens,
+        outputTokens,
+        p95LatencyMs,
+        projectId: workspaceId,
+        requests,
+        totalTokens,
+      })
+      return
+    }
+
+    if (sql.includes('INSERT INTO model_daily_usage')) {
+      const [id, rollupId, model, provider, requests, tokens, cost] = params as [string, string, string, string, number, number, number]
+      this.modelDailyUsage.push({ cost, id, model, provider, requests, rollupId, tokens })
+    }
+  }
+
+  selectAll(sql: string, params: unknown[]) {
+    if (sql.includes('MAX(daily_usage_rollups.created_at)')) {
+      const [slug] = params as [string, string]
+      return [...this.workspaces.values()]
+        .map((workspace) => {
+          const rollups = this.dailyRollups.filter((row) => row.projectId === workspace.id)
+          if (rollups.length === 0) {
+            return null
+          }
+          const latest = [...rollups].sort((left, right) => right.createdAt - left.createdAt)[0]!
+          return {
+            id: workspace.id,
+            latestCreatedAt: latest.createdAt,
+            latestDay: latest.day,
+            name: workspace.name,
+            provider: workspace.provider,
+            slug: workspace.slug,
+          }
+        })
+        .filter((row): row is NonNullable<typeof row> => Boolean(row))
+        .sort((left, right) => {
+          const leftPriority = slug && left.slug === slug ? 0 : 1
+          const rightPriority = slug && right.slug === slug ? 0 : 1
+          if (leftPriority !== rightPriority) {
+            return leftPriority - rightPriority
+          }
+          return right.latestCreatedAt - left.latestCreatedAt
+        })
+    }
+
+    if (sql.includes('FROM daily_usage_rollups') && sql.includes('workspaces.name as projectName')) {
+      const workspaceIds = params.slice(0, -1) as string[]
+      const [startDay] = params.slice(-1) as [string]
+      return this.dailyRollups
+        .filter((row) => workspaceIds.includes(row.projectId) && row.day >= startDay)
+        .map((row) => {
+          const workspace = this.workspaces.get(row.projectId)!
+          return {
+            cachedTokens: row.cachedTokens,
+            cost: row.cost,
+            createdAt: row.createdAt,
+            day: row.day,
+            environment: row.environment,
+            inputTokens: row.inputTokens,
+            outputTokens: row.outputTokens,
+            projectId: workspace.id,
+            projectName: workspace.name,
+            projectProvider: workspace.provider,
+            projectSlug: workspace.slug,
+            requests: row.requests,
+            totalTokens: row.totalTokens,
+          }
+        })
+        .sort((left, right) => left.day.localeCompare(right.day) || left.projectName.localeCompare(right.projectName))
+    }
+
+    if (sql.includes('SUM(model_daily_usage.requests) as requests')) {
+      const workspaceIds = params.slice(0, -2) as string[]
+      const [startDay, endDay] = params.slice(-2) as [string, string]
+      const modelMap = new Map<string, { cost: number; model: string; provider: string; requests: number; tokens: number }>()
+
+      for (const row of this.modelDailyUsage) {
+        const rollup = this.dailyRollups.find((candidate) => candidate.id === row.rollupId)
+        const rollupRangeValue = sql.includes('substr(daily_usage_rollups.usage_date, 1, 10)') ? rollup?.day.slice(0, 10) : rollup?.day
+        if (!rollup || !rollupRangeValue || !workspaceIds.includes(rollup.projectId) || rollupRangeValue < startDay || rollupRangeValue > endDay) {
+          continue
+        }
+        const key = `${row.provider}:${row.model}`
+        const current = modelMap.get(key)
+        if (current) {
+          current.cost += row.cost
+          current.requests += row.requests
+          current.tokens += row.tokens
+          continue
+        }
+        modelMap.set(key, { cost: row.cost, model: row.model, provider: row.provider, requests: row.requests, tokens: row.tokens })
+      }
+
+      return [...modelMap.values()].sort((left, right) => right.tokens - left.tokens)
+    }
+
+    if (sql.includes('FROM model_daily_usage') && sql.includes('daily_usage_rollups.usage_date as day')) {
+      const workspaceIds = params.slice(0, -2) as string[]
+      const [startDay, endDay] = params.slice(-2) as [string, string]
+      return this.modelDailyUsage
+        .flatMap((row) => {
+          const rollup = this.dailyRollups.find((candidate) => candidate.id === row.rollupId)
+          const rollupRangeValue = sql.includes('substr(daily_usage_rollups.usage_date, 1, 10)') ? rollup?.day.slice(0, 10) : rollup?.day
+          if (!rollup || !rollupRangeValue || !workspaceIds.includes(rollup.projectId) || rollupRangeValue < startDay || rollupRangeValue > endDay) {
+            return []
+          }
+          const workspace = this.workspaces.get(rollup.projectId)!
+          return [{
+            cost: row.cost,
+            day: rollup.day,
+            model: row.model,
+            projectId: workspace.id,
+            projectName: workspace.name,
+            projectProvider: workspace.provider,
+            projectSlug: workspace.slug,
+            provider: row.provider,
+            requests: row.requests,
+            tokens: row.tokens,
+          }]
+        })
+        .sort((left, right) => left.day.localeCompare(right.day) || right.tokens - left.tokens)
+    }
+
+    if (sql.includes('FROM issue_events')) {
+      return []
+    }
+
     return []
   }
 }
@@ -124,6 +333,81 @@ describe('ingestExternalRollupsToD1', () => {
       0,
       0,
       Date.parse('2026-05-23T12:00:00Z'),
+    ])
+  })
+
+  it('preserves Hermes hourly rollups through D1 loading into the 24h dashboard view', async () => {
+    const db = new FakeD1Database()
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+
+    await ingestExternalRollupsToD1(env, {
+      environment: 'production',
+      generatedAt: '2026-05-23T12:00:00Z',
+      rollups: [
+        {
+          cachedTokens: 40,
+          estimatedCostUsd: 0.9,
+          inputTokens: 320,
+          models: [
+            {
+              estimatedCostUsd: 0.9,
+              model: 'gpt-5.4',
+              provider: 'Hermes',
+              requests: 5,
+              tokens: 520,
+            },
+          ],
+          outputTokens: 160,
+          requests: 5,
+          totalTokens: 520,
+          usageDate: '2026-05-22T20:00:00Z',
+        },
+        {
+          cachedTokens: 30,
+          estimatedCostUsd: 0.7,
+          inputTokens: 260,
+          models: [
+            {
+              estimatedCostUsd: 0.7,
+              model: 'claude-sonnet-4',
+              provider: 'Hermes',
+              requests: 4,
+              tokens: 410,
+            },
+          ],
+          outputTokens: 120,
+          requests: 4,
+          totalTokens: 410,
+          usageDate: '2026-05-22T21:00:00Z',
+        },
+      ],
+      sourceLabel: 'Hermes plugin sync',
+      workspace: {
+        name: 'Hermes Usage',
+        provider: 'Hermes',
+        slug: 'hermes-usage',
+      },
+    })
+
+    const result = await loadDashboardSnapshotForRequest(env)
+    const snapshot = result.snapshot
+    const filtered = filterSnapshotByTimeframe(snapshot, {
+      endDay: snapshot.filters.availableEndDay,
+      preset: '24h',
+      startDay: snapshot.filters.availableStartDay,
+    })
+
+    expect(filtered.headline.granularity).toBe('hour')
+    expect(filtered.charts.requestsCostCache.map((item) => item.day)).toEqual([
+      '2026-05-22T20:00:00Z',
+      '2026-05-22T21:00:00Z',
+    ])
+    expect(filtered.charts.models).toEqual([
+      expect.objectContaining({ model: 'gpt-5.4', provider: 'Hermes', requests: 5, tokens: 520 }),
+      expect.objectContaining({ model: 'claude-sonnet-4', provider: 'Hermes', requests: 4, tokens: 410 }),
     ])
   })
 
