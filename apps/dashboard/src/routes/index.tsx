@@ -7,7 +7,6 @@ import {
   ArrowUpRight,
   Bot,
   CalendarRange,
-  ChartNoAxesCombined,
   RefreshCcw,
   Search,
 } from 'lucide-react'
@@ -95,10 +94,6 @@ function Home() {
           <button className="toolbar-chip" type="button">
             <Bot className="size-4" />
             {activeSnapshot.headline.workspace}
-          </button>
-          <button className="toolbar-chip" type="button">
-            <ChartNoAxesCombined className="size-4" />
-            {activeSnapshot.headline.environment}
           </button>
           <div className="toolbar-chip toolbar-chip-wide gap-3 pr-3">
             <CalendarRange className="size-4" />
