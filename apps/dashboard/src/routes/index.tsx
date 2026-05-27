@@ -97,7 +97,7 @@ function Home() {
             onChange={setSelectedProjectIds}
             selectedProjectIds={selectedProjectIds}
           />
-          <div className="toolbar-chip toolbar-chip-wide gap-3 pr-3">
+          <div className="toolbar-chip gap-3">
             <CalendarRange className="size-4" />
             <Select
               onValueChange={(value) => {
@@ -121,7 +121,6 @@ function Home() {
                 <SelectItem value="custom">Custom range</SelectItem>
               </SelectContent>
             </Select>
-            <span className="text-xs font-medium uppercase tracking-[0.24em] text-slate-400">{activeSnapshot.headline.rangeLabel}</span>
           </div>
           {timeframe.preset === 'custom' ? (
             <div className="toolbar-chip toolbar-chip-wide gap-2 pr-3">
