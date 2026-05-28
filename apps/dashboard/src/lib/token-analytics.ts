@@ -78,7 +78,7 @@ const MODEL_COLORS = ['#2563eb', '#7c3aed', '#0f766e', '#db2777', '#ea580c', '#0
 
 export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSnapshot {
   const granularity = input.granularity || 'day'
-  const aggregatedDailyRows = summarizeRowsByBucket(input.dailyRows)
+  const aggregatedDailyRows = granularity === 'hour' ? fillMissingHourlyBuckets(summarizeRowsByBucket(input.dailyRows)) : summarizeRowsByBucket(input.dailyRows)
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
       accumulator.cachedTokens += row.cachedTokens
@@ -426,6 +426,44 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   }
 
   return [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
+}
+
+function fillMissingHourlyBuckets(rows: DashboardDailyRow[]) {
+  if (rows.length === 0) {
+    return rows
+  }
+
+  const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
+  const latestTimestamp = Date.parse(sortedRows.at(-1)?.day || '')
+  if (Number.isNaN(latestTimestamp)) {
+    return sortedRows
+  }
+
+  const rowMap = new Map(sortedRows.map((row) => [row.day, row]))
+  const filledRows: DashboardDailyRow[] = []
+
+  for (let offset = 23; offset >= 0; offset -= 1) {
+    const timestamp = latestTimestamp - offset * 60 * 60 * 1000
+    const day = new Date(timestamp).toISOString().slice(0, 13) + ':00:00Z'
+    const existing = rowMap.get(day)
+    if (existing) {
+      filledRows.push(existing)
+      continue
+    }
+
+    filledRows.push({
+      ...EMPTY_PROJECT,
+      cachedTokens: 0,
+      cost: 0,
+      day,
+      inputTokens: 0,
+      outputTokens: 0,
+      requests: 0,
+      totalTokens: 0,
+    })
+  }
+
+  return filledRows
 }
 
 function resolveAvailableProjects(availableProjects: DashboardProjectOption[] | undefined, dailyRows: DashboardDailyRow[]) {
