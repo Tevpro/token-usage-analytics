@@ -351,8 +351,14 @@ def render_config_snapshot(config: TokenAnalyticsConfig) -> dict[str, Any]:
 def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
     with _connect_db(config) as connection:
         connection.row_factory = sqlite3.Row
-        rollups = fetch_daily_rollups(connection, config.days_back)
-        models = fetch_model_rollups(connection, config.days_back)
+        rollups = [
+            *fetch_daily_rollups(connection, config.days_back),
+            *fetch_hourly_rollups(connection),
+        ]
+        models = [
+            *fetch_model_rollups(connection, config.days_back),
+            *fetch_hourly_model_rollups(connection),
+        ]
 
     models_by_day: dict[str, list[dict[str, Any]]] = {}
     for row in models:
@@ -366,7 +372,7 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
         )
 
     payload_rollups: list[dict[str, Any]] = []
-    for row in rollups:
+    for row in sorted(rollups, key=lambda item: str(item["usage_date"])):
         usage_date = str(row["usage_date"])
         payload_rollups.append(
             {
@@ -453,6 +459,66 @@ def fetch_model_rollups(connection: sqlite3.Connection, days_back: int) -> list[
         ORDER BY usage_date ASC, total_tokens DESC, model ASC
     """
     return list(connection.execute(query, (f"-{days_back - 1} days",)))
+
+
+def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    query = """
+        WITH scoped_sessions AS (
+            SELECT
+                strftime('%Y-%m-%dT%H:00:00Z', COALESCE(ended_at, started_at), 'unixepoch') AS usage_date,
+                COALESCE(api_call_count, 0) AS api_calls,
+                COALESCE(input_tokens, 0) AS input_tokens,
+                COALESCE(output_tokens, 0) AS output_tokens,
+                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
+                COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
+                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
+            FROM sessions
+            WHERE started_at IS NOT NULL
+              AND COALESCE(ended_at, started_at) >= unixepoch('now', '-24 hours')
+        )
+        SELECT
+            usage_date,
+            SUM(api_calls) AS api_calls,
+            SUM(input_tokens) AS input_tokens,
+            SUM(output_tokens) AS output_tokens,
+            SUM(cached_tokens) AS cached_tokens,
+            SUM(reasoning_tokens) AS reasoning_tokens,
+            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
+            SUM(cost_usd) AS cost_usd
+        FROM scoped_sessions
+        GROUP BY usage_date
+        ORDER BY usage_date ASC
+    """
+    return list(connection.execute(query))
+
+
+def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+    query = """
+        WITH scoped_sessions AS (
+            SELECT
+                strftime('%Y-%m-%dT%H:00:00Z', COALESCE(ended_at, started_at), 'unixepoch') AS usage_date,
+                COALESCE(NULLIF(model, ''), 'unknown-model') AS model,
+                COALESCE(api_call_count, 0) AS api_calls,
+                COALESCE(input_tokens, 0) AS input_tokens,
+                COALESCE(output_tokens, 0) AS output_tokens,
+                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
+                COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
+                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
+            FROM sessions
+            WHERE started_at IS NOT NULL
+              AND COALESCE(ended_at, started_at) >= unixepoch('now', '-24 hours')
+        )
+        SELECT
+            usage_date,
+            model,
+            SUM(api_calls) AS api_calls,
+            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
+            SUM(cost_usd) AS cost_usd
+        FROM scoped_sessions
+        GROUP BY usage_date, model
+        ORDER BY usage_date ASC, total_tokens DESC, model ASC
+    """
+    return list(connection.execute(query))
 
 
 def post_payload(config: TokenAnalyticsConfig, payload: dict[str, Any]) -> dict[str, Any]:
