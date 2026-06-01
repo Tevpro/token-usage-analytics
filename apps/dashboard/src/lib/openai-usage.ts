@@ -154,6 +154,7 @@ export type ExternalIngestPayload = {
 
 const DEFAULT_DAYS_BACK = 30
 const FRESHNESS_WINDOW_MS = 2 * 60 * 60 * 1000
+const MAX_ROLLUP_DAY_LAG_DAYS = 1
 const OPENAI_PROVIDER = 'OpenAI'
 
 export async function loadDashboardSnapshotForRequest(env: CloudflareAppEnv): Promise<SnapshotLoadResult> {
@@ -833,7 +834,7 @@ async function safelyLoadOpenAiHourlyRows(
 
   const openAiWorkspace = getOpenAiWorkspaceConfig(env)
   const selection = selections[0]
-  if (!selection || selection.workspace.id != openAiWorkspace.id) {
+  if (selection.workspace.id != openAiWorkspace.id) {
     return undefined
   }
 
@@ -1035,8 +1036,8 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
   return created
 }
 
-function buildSourceLabel(provider: string, createdAt: number) {
-  return `${Date.now() - createdAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'} ${provider} data`
+function buildSourceLabel(provider: string, createdAt: number, latestDay: string) {
+  return `${getSourceFreshnessPrefix(createdAt, latestDay)} ${provider} data`
 }
 
 function buildCombinedSourceLabel(selections: WorkspaceSelection[]) {
@@ -1046,13 +1047,22 @@ function buildCombinedSourceLabel(selections: WorkspaceSelection[]) {
 
   if (selections.length === 1) {
     const selection = selections[0]
-    return buildSourceLabel(selection.workspace.provider, selection.latestCreatedAt)
+    return buildSourceLabel(selection.workspace.provider, selection.latestCreatedAt, selection.latestDay)
   }
 
   const providers = [...new Set(selections.map((selection) => selection.workspace.provider))]
   const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
-  const freshness = Date.now() - freshestCreatedAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'
+  const latestDay = [...selections.map((selection) => selection.latestDay)].sort().at(-1) || ''
+  const freshness = getSourceFreshnessPrefix(freshestCreatedAt, latestDay)
   return providers.length === 1 ? `${freshness} ${providers[0]} project data` : `${freshness} multi-source project data`
+}
+
+function getSourceFreshnessPrefix(createdAt: number, latestDay: string) {
+  if (getUtcDayLag(latestDay) > MAX_ROLLUP_DAY_LAG_DAYS) {
+    return 'Stale'
+  }
+
+  return Date.now() - createdAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'
 }
 
 function buildStatusNote(provider: string, createdAt: number, latestDay: string) {
@@ -1104,6 +1114,20 @@ function shiftUtcDay(day: string, offset: number) {
   const date = new Date(`${day}T00:00:00Z`)
   date.setUTCDate(date.getUTCDate() + offset)
   return formatUtcDay(date)
+}
+
+function getUtcDayLag(day: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+    return 0
+  }
+
+  const latestDayMs = Date.parse(`${day}T00:00:00Z`)
+  if (!Number.isFinite(latestDayMs)) {
+    return 0
+  }
+
+  const currentDayMs = Date.parse(`${formatUtcDay(new Date())}T00:00:00Z`)
+  return Math.max(0, Math.round((currentDayMs - latestDayMs) / (24 * 60 * 60 * 1000)))
 }
 
 function roundCurrency(value: number) {
