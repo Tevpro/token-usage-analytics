@@ -421,6 +421,28 @@
   max-width: 100%;
 }
 
+.chart-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+  max-width: 100%;
+}
+
+.chart-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 2px;
+}
+
+.chart-mode-button {
+  border-radius: 999px;
+}
+
 @media (max-width: 768px) {
   .legend-row {
     justify-content: flex-start;
@@ -602,6 +624,14 @@
 .chart-line-muted {
   stroke: var(--chart-violet);
   opacity: 0.72;
+}
+
+.chart-line-grey {
+  stroke: var(--chart-grey);
+}
+
+.chart-line-red {
+  stroke: var(--chart-red);
 }
 
 .issue-list {
