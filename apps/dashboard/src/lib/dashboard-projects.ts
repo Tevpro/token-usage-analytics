@@ -21,12 +21,21 @@ export function filterSnapshotByProjects(snapshot: DashboardSnapshot, selectedPr
   const modelRowsByDay = shouldFilter
     ? snapshot.filters.modelRowsByDay.filter((row) => selectedSet.has(row.projectId))
     : snapshot.filters.modelRowsByDay
+  const hourlyRows = shouldFilter
+    ? snapshot.filters.hourlyRows?.filter((row) => selectedSet.has(row.projectId))
+    : snapshot.filters.hourlyRows
+  const hourlyModelRowsByDay = shouldFilter
+    ? snapshot.filters.hourlyModelRowsByDay?.filter((row) => selectedSet.has(row.projectId))
+    : snapshot.filters.hourlyModelRowsByDay
 
   return buildSnapshotFromRollups({
     availableProjects: snapshot.projects.available,
     dailyRows,
     environment: snapshot.headline.environment,
     generatedAt: snapshot.headline.generatedAt,
+    granularity: snapshot.headline.granularity,
+    hourlyModelRowsByDay,
+    hourlyRows,
     issues: summarizeIssues(issuesByDay),
     issuesByDay,
     models: summarizeModels(modelRowsByDay),

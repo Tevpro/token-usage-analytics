@@ -20,6 +20,7 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
+import { aggregateTrafficChartPoints } from '#/lib/chart-presentation'
 import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
@@ -43,11 +44,28 @@ function Home() {
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
   const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
+  const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
   const agentDataStatus = useMemo(
     () => getAgentDataStatus(activeSnapshot.headline.generatedAt),
     [activeSnapshot.headline.generatedAt],
+  )
+  const bucketLabel = activeSnapshot.headline.granularity === 'hour' ? 'Hourly' : 'Daily'
+  const bucketColumnLabel = activeSnapshot.headline.granularity === 'hour' ? 'Time' : 'Day'
+  const costChartTitle = activeSnapshot.headline.granularity === 'hour' ? 'Allocated hourly cost' : 'Allocated daily cost'
+  const showTrafficChartModeToggle =
+    activeSnapshot.headline.granularity === 'hour' && activeSnapshot.charts.requestsCostCache.length > 12
+  const trafficBarData = useMemo(
+    () =>
+      showTrafficChartModeToggle
+        ? aggregateTrafficChartPoints(activeSnapshot.charts.requestsCostCache, 12)
+        : activeSnapshot.charts.requestsCostCache.map((item) => ({
+            ...item,
+            endDay: item.day,
+            startDay: item.day,
+          })),
+    [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
   )
 
   return (
@@ -170,6 +188,32 @@ function Home() {
         <>
           <section className="analytics-grid analytics-grid-top">
             <ChartCard
+              action={
+                showTrafficChartModeToggle ? (
+                  <div className="chart-mode-toggle" role="group" aria-label="Traffic chart display mode">
+                    <Button
+                      aria-pressed={trafficChartMode === 'bars'}
+                      className="chart-mode-button"
+                      onClick={() => setTrafficChartMode('bars')}
+                      size="xs"
+                      type="button"
+                      variant={trafficChartMode === 'bars' ? 'secondary' : 'ghost'}
+                    >
+                      12 bars
+                    </Button>
+                    <Button
+                      aria-pressed={trafficChartMode === 'line'}
+                      className="chart-mode-button"
+                      onClick={() => setTrafficChartMode('line')}
+                      size="xs"
+                      type="button"
+                      variant={trafficChartMode === 'line' ? 'secondary' : 'ghost'}
+                    >
+                      24h line
+                    </Button>
+                  </div>
+                ) : null
+              }
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -177,7 +221,11 @@ function Home() {
               ]}
               title="Requests / Cost / Cache"
             >
-              <TrafficBars data={activeSnapshot.charts.requestsCostCache} />
+              {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
+                <TrafficTrendChart data={activeSnapshot.charts.requestsCostCache} title="Requests, cost, and cache trends" />
+              ) : (
+                <TrafficBars data={trafficBarData} />
+              )}
             </ChartCard>
 
             <ChartCard
@@ -229,9 +277,11 @@ function Home() {
             <Card className="panel-card overflow-hidden daily-rollups-card">
               <CardHeader className="panel-header-row">
                 <div>
-                  <CardTitle className="panel-title">Daily rollups</CardTitle>
+                  <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
                   <p className="mt-1 text-sm text-slate-500">
-                    Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.
+                    {activeSnapshot.headline.granularity === 'hour'
+                      ? 'Hourly buckets expose the last 24 hours of request, token, cache, and allocated cost activity for faster troubleshooting.'
+                      : 'Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.'}
                   </p>
                 </div>
                 <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
@@ -244,7 +294,7 @@ function Home() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
-                    <TableHead>Day</TableHead>
+                    <TableHead>{bucketColumnLabel}</TableHead>
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Total Tokens</TableHead>
                     <TableHead className="hidden lg:table-cell text-right">Input</TableHead>
@@ -259,7 +309,7 @@ function Home() {
                       <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
                       <TableCell>
                         <div className="flex flex-col gap-1">
-                          <span>{formatDay(row.day)}</span>
+                          <span>{formatBucketLabel(row.day)}</span>
                           <span className="text-xs text-slate-500 sm:hidden">{row.traceId}</span>
                         </div>
                       </TableCell>
@@ -327,7 +377,7 @@ function Home() {
                   }))}
                 />
               }
-              title="Allocated daily cost"
+              title={costChartTitle}
             >
               <CostBars data={activeSnapshot.charts.costByDay} />
             </ChartCard>
@@ -339,6 +389,32 @@ function Home() {
         <>
           <section className="analytics-grid analytics-grid-top">
             <ChartCard
+              action={
+                showTrafficChartModeToggle ? (
+                  <div className="chart-mode-toggle" role="group" aria-label="Traffic chart display mode">
+                    <Button
+                      aria-pressed={trafficChartMode === 'bars'}
+                      className="chart-mode-button"
+                      onClick={() => setTrafficChartMode('bars')}
+                      size="xs"
+                      type="button"
+                      variant={trafficChartMode === 'bars' ? 'secondary' : 'ghost'}
+                    >
+                      12 bars
+                    </Button>
+                    <Button
+                      aria-pressed={trafficChartMode === 'line'}
+                      className="chart-mode-button"
+                      onClick={() => setTrafficChartMode('line')}
+                      size="xs"
+                      type="button"
+                      variant={trafficChartMode === 'line' ? 'secondary' : 'ghost'}
+                    >
+                      24h line
+                    </Button>
+                  </div>
+                ) : null
+              }
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -346,7 +422,11 @@ function Home() {
               ]}
               title="Requests / Cost / Cache"
             >
-              <TrafficBars data={activeSnapshot.charts.requestsCostCache} />
+              {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
+                <TrafficTrendChart data={activeSnapshot.charts.requestsCostCache} title="Requests, cost, and cache trends" />
+              ) : (
+                <TrafficBars data={trafficBarData} />
+              )}
             </ChartCard>
 
             <ChartCard
@@ -359,7 +439,7 @@ function Home() {
               <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
             </ChartCard>
 
-            <ChartCard title="Allocated daily cost">
+            <ChartCard title={costChartTitle}>
               <CostBars data={activeSnapshot.charts.costByDay} />
             </ChartCard>
           </section>
@@ -369,9 +449,9 @@ function Home() {
           <Card className="panel-card overflow-hidden daily-rollups-card">
             <CardHeader className="panel-header-row">
               <div>
-                <CardTitle className="panel-title">Daily rollups</CardTitle>
+                <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
                 <p className="mt-1 text-sm text-slate-500">
-                  Review the daily request, token, cache, and cost totals behind the current cost window.
+                  Review the request, token, cache, and cost totals behind the current cost window.
                 </p>
               </div>
             </CardHeader>
@@ -380,7 +460,7 @@ function Home() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
-                    <TableHead>Day</TableHead>
+                    <TableHead>{bucketColumnLabel}</TableHead>
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Total Tokens</TableHead>
                     <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
@@ -391,7 +471,7 @@ function Home() {
                   {activeSnapshot.table.map((row) => (
                     <TableRow key={`${row.traceId}:cost`}>
                       <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
-                      <TableCell>{formatDay(row.day)}</TableCell>
+                      <TableCell>{formatBucketLabel(row.day)}</TableCell>
                       <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
                       <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
                       <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
@@ -603,14 +683,17 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
   )
 }
 
-function ChartCard({ children, footer, legend, title }: ChartCardProps) {
+function ChartCard({ action, children, footer, legend, title }: ChartCardProps) {
   return (
     <Card className="panel-card">
       <CardHeader className="panel-header-row">
         <div>
           <CardTitle className="panel-title">{title}</CardTitle>
         </div>
-        {legend ? <LegendRow items={legend} /> : null}
+        <div className="chart-header-actions">
+          {action}
+          {legend ? <LegendRow items={legend} /> : null}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         {children}
@@ -656,20 +739,39 @@ function LegendStats({ items }: LegendStatsProps) {
 
 function TrafficBars({ data }: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
+  const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
   return (
     <div className="chart-block chart-block-bars">
       {data.map((item) => (
-        <div className="bar-group" key={item.day}>
+        <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
             <span className="bar bar-grey" style={{ height: `${(item.primary / maxRequests) * 100}%` }} />
-            <span className="bar bar-red" style={{ height: `${Math.max(item.secondary, 8)}px` }} />
+            <span className="bar bar-red" style={{ height: `${Math.max((item.secondary / maxCost) * 100, 8)}%` }} />
             <span className="bar bar-violet" style={{ height: `${Math.max(item.tertiary, 8)}%` }} />
           </div>
-          <span className="chart-label">{formatDayShort(item.day)}</span>
+          <span className="chart-label">{formatTrafficBucketLabel(item.startDay, item.endDay)}</span>
         </div>
       ))}
     </div>
+  )
+}
+
+function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
+  const requestPoints = toPolylinePoints(data.map((item) => item.primary))
+  const costPoints = toPolylinePoints(data.map((item) => item.secondary))
+  const cachePoints = toPolylinePoints(data.map((item) => item.tertiary))
+
+  return (
+    <svg className="line-chart" viewBox="0 0 320 150" role="img">
+      <title>{title}</title>
+      <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
+      <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
+      <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
+      <polyline className="chart-line chart-line-grey" points={requestPoints} />
+      <polyline className="chart-line chart-line-red" points={costPoints} />
+      <polyline className="chart-line chart-line-muted" points={cachePoints} />
+    </svg>
   )
 }
 
@@ -778,21 +880,46 @@ function formatModelLabel(model: string, provider: string) {
   return provider ? `${provider} · ${model}` : model
 }
 
-function formatDay(value: string) {
+function formatBucketLabel(value: string) {
+  const isTimestamp = value.includes('T')
+  const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
+
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
+    hour: isTimestamp ? 'numeric' : undefined,
+    minute: isTimestamp ? '2-digit' : undefined,
     month: 'short',
     timeZone: 'UTC',
     year: 'numeric',
-  }).format(new Date(`${value}T00:00:00Z`))
+  }).format(date)
 }
 
 function formatDayShort(value: string) {
+  const isTimestamp = value.includes('T')
+  const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
+
   return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
+    day: isTimestamp ? undefined : 'numeric',
+    hour: isTimestamp ? 'numeric' : undefined,
+    minute: isTimestamp ? '2-digit' : undefined,
+    month: isTimestamp ? undefined : 'short',
     timeZone: 'UTC',
-  }).format(new Date(`${value}T00:00:00Z`))
+  }).format(date)
+}
+
+function formatTrafficBucketLabel(startDay: string, endDay: string) {
+  if (startDay === endDay) {
+    return formatDayShort(startDay)
+  }
+
+  const start = new Date(startDay)
+  const end = new Date(endDay)
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    hour: 'numeric',
+    timeZone: 'UTC',
+  })
+
+  return `${formatter.format(start)}–${formatter.format(end)}`
 }
 
 function toPolylinePoints(values: number[]) {
@@ -815,6 +942,7 @@ const toneClassNameMap = {
 } as const
 
 type ChartCardProps = {
+  action?: ReactNode
   children: ReactNode
   footer?: ReactNode
   legend?: LegendItem[]
@@ -864,12 +992,25 @@ type ModelUsageBreakdownCardProps = {
 
 type TrafficBarsProps = {
   data: Array<{
+    endDay: string
+    primary: number
+    secondary: number
+    startDay: string
+    tertiary: number
+  }>
+}
+
+type TrafficTrendChartProps = {
+  data: Array<{
     day: string
     primary: number
     secondary: number
     tertiary: number
   }>
+  title: string
 }
+
+type TrafficChartMode = 'bars' | 'line'
 
 type LineChartProps = {
   data: Array<{
