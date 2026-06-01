@@ -834,7 +834,7 @@ async function safelyLoadOpenAiHourlyRows(
 
   const openAiWorkspace = getOpenAiWorkspaceConfig(env)
   const selection = selections[0]
-  if (!selection || selection.workspace.id != openAiWorkspace.id) {
+  if (selection.workspace.id != openAiWorkspace.id) {
     return undefined
   }
 

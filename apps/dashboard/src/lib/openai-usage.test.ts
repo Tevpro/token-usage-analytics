@@ -145,7 +145,7 @@ class FakeD1Database {
           if (rollups.length === 0) {
             return null
           }
-          const latest = [...rollups].sort((left, right) => right.createdAt - left.createdAt)[0]!
+          const latest = [...rollups].sort((left, right) => right.createdAt - left.createdAt)[0]
           return {
             id: workspace.id,
             latestCreatedAt: latest.createdAt,
