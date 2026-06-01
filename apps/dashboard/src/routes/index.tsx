@@ -46,8 +46,11 @@ function Home() {
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
   const agentDataStatus = useMemo(
-    () => getAgentDataStatus(activeSnapshot.headline.generatedAt),
-    [activeSnapshot.headline.generatedAt],
+    () =>
+      getAgentDataStatus(projectSnapshot.headline.generatedAt, {
+        latestRollupDay: projectSnapshot.filters.availableEndDay,
+      }),
+    [projectSnapshot.filters.availableEndDay, projectSnapshot.headline.generatedAt],
   )
 
   return (
