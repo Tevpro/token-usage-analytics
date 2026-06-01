@@ -271,25 +271,26 @@ function Home() {
             ))}
           </section>
 
-          <ProjectBreakdownCard projects={activeSnapshot.projects.breakdown} />
+          <section className="space-y-6">
+            <ProjectBreakdownCard projects={activeSnapshot.projects.breakdown} />
 
-          <Card className="panel-card overflow-hidden daily-rollups-card">
-            <CardHeader className="panel-header-row">
-              <div>
-                <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
-                <p className="mt-1 text-sm text-slate-500">
-                  {activeSnapshot.headline.granularity === 'hour'
-                    ? 'Hourly buckets expose the last 24 hours of request, token, cache, and allocated cost activity for faster troubleshooting.'
-                    : 'Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.'}
-                </p>
-              </div>
-              <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
-                <Activity className="mr-1 size-3.5" />
-                {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-0">
-              <Table className="daily-rollups-table">
+            <Card className="panel-card overflow-hidden daily-rollups-card">
+              <CardHeader className="panel-header-row">
+                <div>
+                  <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {activeSnapshot.headline.granularity === 'hour'
+                      ? 'Hourly buckets expose the last 24 hours of request, token, cache, and allocated cost activity for faster troubleshooting.'
+                      : 'Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.'}
+                  </p>
+                </div>
+                <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
+                  <Activity className="mr-1 size-3.5" />
+                  {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
+                </Badge>
+              </CardHeader>
+              <CardContent className="p-0">
+                <Table className="daily-rollups-table">
                 <TableHeader>
                   <TableRow>
                     <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
@@ -324,8 +325,9 @@ function Home() {
               </Table>
             </CardContent>
           </Card>
-        </>
-      ) : null}
+        </section>
+      </>
+    ) : null}
 
       {activeTab === 'models' ? (
         <div className="space-y-6">
