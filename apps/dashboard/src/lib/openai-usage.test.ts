@@ -401,7 +401,11 @@ describe('ingestExternalRollupsToD1', () => {
     })
 
     expect(filtered.headline.granularity).toBe('hour')
-    expect(filtered.charts.requestsCostCache.map((item) => item.day)).toEqual([
+    expect(filtered.charts.requestsCostCache).toHaveLength(24)
+    expect(filtered.charts.requestsCostCache[0]).toEqual(
+      expect.objectContaining({ day: '2026-05-21T22:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+    )
+    expect(filtered.charts.requestsCostCache.slice(-2).map((item) => item.day)).toEqual([
       '2026-05-22T20:00:00Z',
       '2026-05-22T21:00:00Z',
     ])
