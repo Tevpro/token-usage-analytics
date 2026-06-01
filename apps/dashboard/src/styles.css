@@ -536,18 +536,30 @@
 }
 
 .chart-label {
-  color: #64748b;
-  font-size: 0.72rem;
+  min-height: 1.95rem;
+  color: #475569;
+  font-size: 0.78rem;
+  font-weight: 500;
+  line-height: 1.2;
   max-width: 100%;
   overflow: hidden;
+  text-align: center;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.chart-label-placeholder {
+  visibility: hidden;
+}
+
 .chart-label-wide {
-  max-width: 84px;
+  display: -webkit-box;
+  max-width: 96px;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .line-chart {
@@ -577,11 +589,12 @@
   }
 
   .chart-label {
-    font-size: 0.64rem;
+    min-height: 1.8rem;
+    font-size: 0.7rem;
   }
 
   .chart-label-wide {
-    max-width: 56px;
+    max-width: 72px;
   }
 
   .line-chart {
@@ -603,7 +616,7 @@
   }
 
   .chart-label-wide {
-    max-width: 48px;
+    max-width: 64px;
   }
 }
 

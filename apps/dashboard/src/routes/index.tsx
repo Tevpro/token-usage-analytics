@@ -1053,10 +1053,12 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
 
   return (
     <div className="chart-block chart-block-bars chart-block-thick">
-      {data.map((item) => (
+      {data.map((item, index) => (
         <div
+          aria-label={`${item.model}: ${item[valueKey].toLocaleString('en-US')}`}
           className="bar-group"
           key={`${item.provider}:${item.model}:${valueKey}`}
+          title={item.model}
         >
           <div className="bar-stack bar-stack-wide">
             <span
@@ -1067,9 +1069,13 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
               }}
             />
           </div>
-          <span className="chart-label chart-label-wide">
-            {formatModelLabel(item.model, item.provider)}
-          </span>
+          {shouldRenderTick(index, data.length, 4) ? (
+            <span className="chart-label chart-label-wide" title={formatModelLabel(item.model, item.provider)}>
+              {formatModelTick(item.model)}
+            </span>
+          ) : (
+            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+          )}
         </div>
       ))}
     </div>
@@ -1084,7 +1090,7 @@ function TokenBars({ data }: TokenBarsProps) {
 
   return (
     <div className="chart-block chart-block-bars">
-      {data.map((item) => {
+      {data.map((item, index) => {
         const inputHeight = (item.inputTokens / maxTokens) * 100
         const outputHeight = (item.outputTokens / maxTokens) * 100
 
@@ -1100,7 +1106,13 @@ function TokenBars({ data }: TokenBarsProps) {
                 style={{ height: `${outputHeight}%` }}
               />
             </div>
-            <span className="chart-label">{formatDayShort(item.day)}</span>
+            {shouldRenderTick(index, data.length) ? (
+              <span className="chart-label" title={formatBucketLabel(item.day)}>
+                {formatDayShort(item.day)}
+              </span>
+            ) : (
+              <span aria-hidden className="chart-label chart-label-placeholder" />
+            )}
           </div>
         )
       })}
@@ -1113,7 +1125,7 @@ function CostBars({ data }: CostBarsProps) {
 
   return (
     <div className="chart-block chart-block-bars chart-block-thick">
-      {data.map((item) => (
+      {data.map((item, index) => (
         <div className="bar-group" key={item.day}>
           <div className="bar-stack bar-stack-wide">
             <span
@@ -1121,9 +1133,13 @@ function CostBars({ data }: CostBarsProps) {
               style={{ height: `${(item.cost / maxCost) * 100}%` }}
             />
           </div>
-          <span className="chart-label chart-label-wide">
-            {formatDayShort(item.day)}
-          </span>
+          {shouldRenderTick(index, data.length) ? (
+            <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
+              {formatDayShort(item.day)}
+            </span>
+          ) : (
+            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+          )}
         </div>
       ))}
     </div>
@@ -1173,6 +1189,13 @@ function formatModelLabel(model: string, provider: string) {
   return provider ? `${provider} · ${model}` : model
 }
 
+function formatModelTick(model: string) {
+  const trimmed = model.trim()
+  const slashSegment = trimmed.split('/').pop() ?? trimmed
+  const colonSegment = slashSegment.split(':').pop() ?? slashSegment
+  return colonSegment
+}
+
 function formatBucketLabel(value: string) {
   const isTimestamp = value.includes('T')
   const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
@@ -1198,6 +1221,14 @@ function formatDayShort(value: string) {
     month: isTimestamp ? undefined : 'short',
     timeZone: isTimestamp ? DASHBOARD_TIME_ZONE : 'UTC',
   }).format(date)
+}
+
+function shouldRenderTick(index: number, total: number, maxLabels = 6) {
+  if (total <= maxLabels) return true
+  if (index === 0 || index === total - 1) return true
+
+  const stride = Math.max(1, Math.ceil((total - 1) / (maxLabels - 1)))
+  return index % stride === 0
 }
 
 function formatTrafficBucketLabel(startDay: string, endDay: string) {
