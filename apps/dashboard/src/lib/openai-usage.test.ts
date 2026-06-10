@@ -489,7 +489,7 @@ describe('ingestExternalRollupsToD1', () => {
 
     expect(snapshot.headline.generatedAt).toBe('2026-05-23T12:00:00.000Z')
     expect(snapshot.headline.sourceLabel).toContain('Hermes data')
-    expect(snapshot.headline.summary).toContain('Latest rollup date: n/a.')
+    expect(snapshot.headline.summary).toContain('Latest usage bucket: n/a.')
     expect(snapshot.projects.available).toEqual([
       expect.objectContaining({ projectName: 'Hermes Usage', projectSlug: 'hermes-usage' }),
     ])
@@ -561,7 +561,7 @@ describe('ingestExternalRollupsToD1', () => {
 
     const result = await loadDashboardSnapshotForRequest(env)
     expect(result.snapshot.headline.summary).toBe(
-      '2 projects are contributing rollups. Last update 12m ago. Latest rollup date: Jun 10, 2026, 10:00 AM CDT.',
+      '2 projects are contributing rollups. Last sync 12m ago. Latest usage bucket: Jun 10, 2026, 10:00 AM CDT.',
     )
   })
 })

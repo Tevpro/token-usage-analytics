@@ -174,6 +174,7 @@ def test_build_payload_aggregates_tokens_costs_and_models(tmp_path):
     assert len(daily_rollups) == 1
 
     day = daily_rollups[0]
+    assert day["usageDate"] == "2025-11-19"
     assert day["requests"] == 5
     assert day["inputTokens"] == 150
     assert day["outputTokens"] == 70
@@ -319,3 +320,109 @@ def test_post_payload_sends_cloudflare_friendly_headers(tmp_path, monkeypatch):
     assert seen["content_type"] == "application/json"
     assert seen["user_agent"] == "hermes-token-analytics/1.0"
     assert seen["accept"] == "application/json"
+
+
+def test_build_payload_uses_utc_hour_for_hourly_rollups(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_db(db_path)
+
+    class _FixedDateTime:
+        @staticmethod
+        def now(tz=None):
+            from datetime import datetime, timezone
+            current = datetime(2025, 11, 19, 2, 0, 0, tzinfo=timezone.utc)
+            return current if tz is None else current.astimezone(tz)
+
+        @staticmethod
+        def fromtimestamp(value, tz=None):
+            from datetime import datetime
+            return datetime.fromtimestamp(value, tz=tz)
+
+        @staticmethod
+        def combine(date_value, time_value, tzinfo=None):
+            from datetime import datetime
+            return datetime.combine(date_value, time_value, tzinfo=tzinfo)
+
+    monkeypatch.setattr(_cli, "datetime", _FixedDateTime)
+
+    payload = build_payload(_config(db_path))
+    hourly = [rollup for rollup in payload["rollups"] if "T" in rollup["usageDate"]]
+
+    assert [rollup["usageDate"] for rollup in hourly] == [
+        "2025-11-19T00:00:00Z",
+        "2025-11-19T01:00:00Z",
+    ]
+    assert [rollup["requests"] for rollup in hourly] == [3, 2]
+
+
+def test_build_payload_uses_utc_day_boundaries(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            source TEXT,
+            model TEXT,
+            started_at REAL,
+            ended_at REAL,
+            api_call_count INTEGER DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            reasoning_tokens INTEGER DEFAULT 0,
+            estimated_cost_usd REAL,
+            actual_cost_usd REAL
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO sessions (
+            id, source, model, started_at, ended_at, api_call_count,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+            reasoning_tokens, estimated_cost_usd, actual_cost_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "s1",
+            "slack",
+            "gpt-5.4",
+            1763511300.0,
+            1763512200.0,
+            1,
+            10,
+            5,
+            0,
+            0,
+            0,
+            0.25,
+            None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    class _FixedDateTime:
+        @staticmethod
+        def now(tz=None):
+            from datetime import datetime, timezone
+            current = datetime(2025, 11, 19, 12, 0, 0, tzinfo=timezone.utc)
+            return current if tz is None else current.astimezone(tz)
+
+        @staticmethod
+        def fromtimestamp(value, tz=None):
+            from datetime import datetime
+            return datetime.fromtimestamp(value, tz=tz)
+
+        @staticmethod
+        def combine(date_value, time_value, tzinfo=None):
+            from datetime import datetime
+            return datetime.combine(date_value, time_value, tzinfo=tzinfo)
+
+    monkeypatch.setattr(_cli, "datetime", _FixedDateTime)
+
+    payload = build_payload(_config(db_path))
+
+    assert payload["rollups"][0]["usageDate"] == "2025-11-19"

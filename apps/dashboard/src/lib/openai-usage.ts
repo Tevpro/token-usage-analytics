@@ -1,3 +1,4 @@
+import { formatHoustonDay, formatHoustonTimestamp } from '#/lib/dashboard-timezone'
 import type { CloudflareAppEnv } from '#/lib/runtime'
 import type {
   DashboardIssueByDay,
@@ -10,7 +11,6 @@ import {
   buildSnapshotFromRollups,
   calculateCachedShare,
 } from '#/lib/token-analytics'
-import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
 
 type DailyRollupRow = DashboardProjectOption & {
   cachedTokens: number
@@ -1364,7 +1364,7 @@ function buildStatusNote(
   createdAt: number,
   latestDay: string | null,
 ) {
-  return `1 project is contributing rollups. Last update ${formatRelativeAge(createdAt)}. Latest rollup date: ${formatLatestRollupLabel(latestDay)}.`
+  return `1 project is contributing rollups. Last sync ${formatRelativeAge(createdAt)}. Latest usage bucket: ${formatLatestRollupLabel(latestDay)}.`
 }
 
 function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
@@ -1389,7 +1389,7 @@ function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
     [...selections.map((selection) => selection.latestDay || '')]
       .sort()
       .at(-1) || 'n/a'
-  return `${selections.length} projects are contributing rollups. Last update ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${formatLatestRollupLabel(latestDay)}.`
+  return `${selections.length} projects are contributing rollups. Last sync ${formatRelativeAge(freshestCreatedAt)}. Latest usage bucket: ${formatLatestRollupLabel(latestDay)}.`
 }
 
 function formatRelativeAge(timestamp: number) {
@@ -1415,24 +1415,9 @@ function formatLatestRollupLabel(value: string | null) {
     return 'n/a'
   }
 
-  if (value.includes('T')) {
-    return new Intl.DateTimeFormat('en-US', {
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      month: 'short',
-      timeZone: DASHBOARD_TIME_ZONE,
-      timeZoneName: 'short',
-      year: 'numeric',
-    }).format(new Date(value))
-  }
-
-  return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-    year: 'numeric',
-  }).format(new Date(`${value}T12:00:00Z`))
+  return value.includes('T')
+    ? formatHoustonTimestamp(value)
+    : formatHoustonDay(value)
 }
 
 function formatUtcDay(value: Date) {

@@ -141,15 +141,15 @@ describe('dashboard timeframe filtering', () => {
 
     expect(filtered.headline.granularity).toBe('hour')
     expect(filtered.table).toHaveLength(24)
-    expect(filtered.table[0]?.day).toBe('2026-05-02T23:00:00Z')
-    expect(filtered.table[20]?.day).toBe('2026-05-03T19:00:00Z')
-    expect(filtered.table[20]).toEqual(
+    expect(filtered.table[0]?.day).toBe('2026-05-03T00:00:00Z')
+    expect(filtered.table[19]?.day).toBe('2026-05-03T19:00:00Z')
+    expect(filtered.table[19]).toEqual(
       expect.objectContaining({ cost: 0, day: '2026-05-03T19:00:00Z', requests: 0, totalTokens: 0 }),
     )
     expect(filtered.table.slice(-3).map((row) => row.day)).toEqual([
-      '2026-05-03T20:00:00Z',
       '2026-05-03T21:00:00Z',
       '2026-05-03T22:00:00Z',
+      '2026-05-03T23:00:00Z',
     ])
     expect(filtered.kpis.find((item) => item.label === 'API Calls')?.value).toBe('12')
     expect(filtered.charts.models).toEqual([
