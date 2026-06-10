@@ -561,7 +561,7 @@ describe('ingestExternalRollupsToD1', () => {
 
     const result = await loadDashboardSnapshotForRequest(env)
     expect(result.snapshot.headline.summary).toBe(
-      '2 projects are contributing rollups. Last update 12m ago. Latest usage bucket: Jun 10, 2026, 10:00 AM CDT.',
+      '2 projects are contributing rollups. Last sync 12m ago. Latest usage bucket: Jun 10, 2026, 10:00 AM CDT.',
     )
   })
 })

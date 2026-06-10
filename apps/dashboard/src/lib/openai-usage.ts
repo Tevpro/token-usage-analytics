@@ -1364,7 +1364,7 @@ function buildStatusNote(
   createdAt: number,
   latestDay: string | null,
 ) {
-  return `1 project is contributing rollups. Last update ${formatRelativeAge(createdAt)}. Latest usage bucket: ${formatLatestRollupLabel(latestDay)}.`
+  return `1 project is contributing rollups. Last sync ${formatRelativeAge(createdAt)}. Latest usage bucket: ${formatLatestRollupLabel(latestDay)}.`
 }
 
 function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
@@ -1389,7 +1389,7 @@ function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
     [...selections.map((selection) => selection.latestDay || '')]
       .sort()
       .at(-1) || 'n/a'
-  return `${selections.length} projects are contributing rollups. Last update ${formatRelativeAge(freshestCreatedAt)}. Latest usage bucket: ${formatLatestRollupLabel(latestDay)}.`
+  return `${selections.length} projects are contributing rollups. Last sync ${formatRelativeAge(freshestCreatedAt)}. Latest usage bucket: ${formatLatestRollupLabel(latestDay)}.`
 }
 
 function formatRelativeAge(timestamp: number) {
