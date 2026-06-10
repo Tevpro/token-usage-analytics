@@ -7,8 +7,8 @@ on:
       - synchronize
       - reopened
     paths:
-      - 'apps/dashboard/**'
-      - '.github/workflows/preview-deploy.yml'
+      - "apps/dashboard/**"
+      - ".github/workflows/preview-deploy.yml"
 
 concurrency:
   group: cloudflare-preview-pr-${{ github.event.pull_request.number }}
@@ -20,6 +20,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      pull-requests: write
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -45,7 +46,65 @@ jobs:
         run: npm run build
 
       - name: Deploy PR preview worker
+        id: deploy
         run: |
+          deploy_log=$(mktemp)
+
           npx wrangler deploy \
             --name token-usage-analytics-pr-${{ github.event.pull_request.number }} \
-            --var 'APP_ENV:preview'
+            --var 'APP_ENV:preview' 2>&1 | tee "$deploy_log"
+
+          preview_url=$(grep -Eo 'https://[^[:space:]]+\.workers\.dev' "$deploy_log" | tail -n 1)
+
+          if [ -z "$preview_url" ]; then
+            echo "Could not determine the preview URL from Wrangler output." >&2
+            exit 1
+          fi
+
+          echo "preview_url=$preview_url" >> "$GITHUB_OUTPUT"
+
+      - name: Add preview link to job summary
+        run: |
+          {
+            echo '## Cloudflare PR preview'
+            echo
+            echo "- Preview URL: ${{ steps.deploy.outputs.preview_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment preview URL on PR
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.preview_url }}
+        with:
+          script: |
+            const marker = '<!-- cloudflare-preview-url -->'
+            const body = `${marker}\n🚀 Cloudflare preview: ${process.env.PREVIEW_URL}`
+            const { owner, repo } = context.repo
+            const issue_number = context.issue.number
+
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number,
+              per_page: 100,
+            })
+
+            const existing = comments.find((comment) =>
+              comment.user?.type === 'Bot' && comment.body?.includes(marker),
+            )
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: existing.id,
+                body,
+              })
+            } else {
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number,
+                body,
+              })
+            }
