@@ -28,6 +28,8 @@ import type { TimeframePreset, TimeframeSelection } from '#/lib/dashboard-timefr
 import { loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
 import type { DashboardProjectSummary, DashboardSnapshot } from '#/lib/token-analytics'
 
+const DASHBOARD_TIME_ZONE = 'America/Chicago'
+
 const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
   const { getRuntimeEnv } = await import('#/lib/worker-env')
   const result = await loadDashboardSnapshotForRequest(getRuntimeEnv())
@@ -289,7 +291,7 @@ function Home() {
                 </div>
                 <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
                   <Activity className="mr-1 size-3.5" />
-                  {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
+                  {formatRefreshBasisLabel(activeSnapshot.headline.generatedAt)} refresh basis
                 </Badge>
               </CardHeader>
               <CardContent className="p-0">
@@ -892,7 +894,7 @@ function formatBucketLabel(value: string) {
     hour: isTimestamp ? 'numeric' : undefined,
     minute: isTimestamp ? '2-digit' : undefined,
     month: 'short',
-    timeZone: 'UTC',
+    timeZone: isTimestamp ? DASHBOARD_TIME_ZONE : 'UTC',
     year: 'numeric',
   }).format(date)
 }
@@ -906,7 +908,7 @@ function formatDayShort(value: string) {
     hour: isTimestamp ? 'numeric' : undefined,
     minute: isTimestamp ? '2-digit' : undefined,
     month: isTimestamp ? undefined : 'short',
-    timeZone: 'UTC',
+    timeZone: isTimestamp ? DASHBOARD_TIME_ZONE : 'UTC',
   }).format(date)
 }
 
@@ -919,10 +921,21 @@ function formatTrafficBucketLabel(startDay: string, endDay: string) {
   const end = new Date(endDay)
   const formatter = new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
-    timeZone: 'UTC',
+    timeZone: DASHBOARD_TIME_ZONE,
   })
 
   return `${formatter.format(start)}–${formatter.format(end)}`
+}
+
+function formatRefreshBasisLabel(value: string) {
+  return new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+    timeZone: DASHBOARD_TIME_ZONE,
+    year: 'numeric',
+  }).format(new Date(value))
 }
 
 function toPolylinePoints(values: number[]) {

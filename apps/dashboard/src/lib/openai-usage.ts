@@ -1131,14 +1131,13 @@ function getSourceFreshnessPrefix(createdAt: number, latestDay: string | null) {
   return Date.now() - createdAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'
 }
 
-function buildStatusNote(provider: string, createdAt: number, latestDay: string | null) {
-  const latestRollupLabel = latestDay || 'n/a'
-  return `${provider} rollups last updated ${formatRelativeAge(createdAt)} and served from Cloudflare D1. Latest rollup date: ${latestRollupLabel}.`
+function buildStatusNote(_provider: string, createdAt: number, latestDay: string | null) {
+  return `1 project is contributing rollups. Last update ${formatRelativeAge(createdAt)}. Latest rollup date: ${formatLatestRollupLabel(latestDay)}.`
 }
 
 function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
   if (selections.length === 0) {
-    return 'No project rollups were found in Cloudflare D1.'
+    return 'No project rollups were found.'
   }
 
   if (selections.length === 1) {
@@ -1148,7 +1147,7 @@ function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
 
   const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
   const latestDay = [...selections.map((selection) => selection.latestDay || '')].sort().at(-1) || 'n/a'
-  return `${selections.length} projects are contributing rollups from Cloudflare D1. Last refresh ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${latestDay}.`
+  return `${selections.length} projects are contributing rollups. Last update ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${formatLatestRollupLabel(latestDay)}.`
 }
 
 function formatRelativeAge(timestamp: number) {
@@ -1167,6 +1166,31 @@ function formatRelativeAge(timestamp: number) {
   }
 
   return `${Math.round(deltaHours / 24)}d ago`
+}
+
+function formatLatestRollupLabel(value: string | null) {
+  if (!value) {
+    return 'n/a'
+  }
+
+  if (value.includes('T')) {
+    return new Intl.DateTimeFormat('en-US', {
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      month: 'short',
+      timeZone: 'America/Chicago',
+      timeZoneName: 'short',
+      year: 'numeric',
+    }).format(new Date(value))
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+    year: 'numeric',
+  }).format(new Date(`${value}T12:00:00Z`))
 }
 
 function formatUtcDay(value: Date) {
