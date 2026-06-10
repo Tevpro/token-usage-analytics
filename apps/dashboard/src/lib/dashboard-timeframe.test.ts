@@ -110,4 +110,50 @@ describe('dashboard timeframe filtering', () => {
       { model: 'claude-sonnet-4', provider: 'Anthropic', requests: 9, tokens: 1200 },
     ])
   })
+
+  it('uses hourly buckets for the 24h preset when finer-grained rows are available', () => {
+    const hourlySnapshot = buildSnapshotFromRollups({
+      dailyRows: [
+        { cachedTokens: 300, cost: 4.5, day: '2026-05-03', inputTokens: 3000, outputTokens: 1200, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', requests: 30, totalTokens: 4200 },
+      ],
+      environment: 'production',
+      generatedAt: '2026-05-03T23:00:00Z',
+      hourlyRows: [
+        { cachedTokens: 40, cost: 0.6, day: '2026-05-03T20:00:00Z', inputTokens: 400, outputTokens: 180, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', requests: 4, totalTokens: 580 },
+        { cachedTokens: 35, cost: 0.5, day: '2026-05-03T21:00:00Z', inputTokens: 350, outputTokens: 140, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', requests: 3, totalTokens: 490 },
+        { cachedTokens: 45, cost: 0.7, day: '2026-05-03T22:00:00Z', inputTokens: 450, outputTokens: 210, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', requests: 5, totalTokens: 660 },
+      ],
+      issues: [],
+      models: [{ cost: 4.5, model: 'gpt-5.4', provider: 'OpenAI', requests: 30, tokens: 4200 }],
+      modelRowsByDay: [
+        { cost: 0.6, day: '2026-05-03T20:00:00Z', model: 'gpt-5.4', projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', provider: 'OpenAI', requests: 4, tokens: 580 },
+        { cost: 0.5, day: '2026-05-03T21:00:00Z', model: 'gpt-5.4', projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', provider: 'OpenAI', requests: 3, tokens: 490 },
+        { cost: 0.7, day: '2026-05-03T22:00:00Z', model: 'gpt-5.4', projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'OpenAI', projectSlug: 'atlas', provider: 'OpenAI', requests: 5, tokens: 660 },
+      ],
+      sourceLabel: 'Live OpenAI usage data',
+      workspaceName: 'Atlas',
+    })
+
+    const filtered = filterSnapshotByTimeframe(hourlySnapshot, {
+      endDay: '2026-05-03',
+      preset: '24h',
+    })
+
+    expect(filtered.headline.granularity).toBe('hour')
+    expect(filtered.table).toHaveLength(24)
+    expect(filtered.table[0]?.day).toBe('2026-05-03T00:00:00Z')
+    expect(filtered.table[19]?.day).toBe('2026-05-03T19:00:00Z')
+    expect(filtered.table[19]).toEqual(
+      expect.objectContaining({ cost: 0, day: '2026-05-03T19:00:00Z', requests: 0, totalTokens: 0 }),
+    )
+    expect(filtered.table.slice(-3).map((row) => row.day)).toEqual([
+      '2026-05-03T21:00:00Z',
+      '2026-05-03T22:00:00Z',
+      '2026-05-03T23:00:00Z',
+    ])
+    expect(filtered.kpis.find((item) => item.label === 'API Calls')?.value).toBe('12')
+    expect(filtered.charts.models).toEqual([
+      expect.objectContaining({ model: 'gpt-5.4', requests: 12, tokens: 1730 }),
+    ])
+  })
 })

@@ -107,6 +107,31 @@ def _make_db(path: Path) -> None:
     conn.close()
 
 
+def _make_empty_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            source TEXT,
+            model TEXT,
+            started_at REAL,
+            ended_at REAL,
+            api_call_count INTEGER DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            reasoning_tokens INTEGER DEFAULT 0,
+            estimated_cost_usd REAL,
+            actual_cost_usd REAL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def _config(db_path: Path) -> TokenAnalyticsConfig:
     return TokenAnalyticsConfig(
         db_path=db_path,
@@ -144,9 +169,11 @@ def test_build_payload_aggregates_tokens_costs_and_models(tmp_path):
 
     assert payload["workspace"]["slug"] == "tevpro-hermes"
     assert payload["environment"] == "production"
-    assert len(payload["rollups"]) == 1
 
-    day = payload["rollups"][0]
+    daily_rollups = [row for row in payload["rollups"] if "T" not in row["usageDate"]]
+    assert len(daily_rollups) == 1
+
+    day = daily_rollups[0]
     assert day["usageDate"] == "2025-11-19"
     assert day["requests"] == 5
     assert day["inputTokens"] == 150
@@ -158,6 +185,61 @@ def test_build_payload_aggregates_tokens_costs_and_models(tmp_path):
     assert [model["model"] for model in day["models"]] == ["gpt-5.4", "claude-sonnet-4"]
     assert day["models"][0]["tokens"] == 175
     assert day["models"][1]["estimatedCostUsd"] == 0.5
+
+
+def test_build_payload_omits_idle_hourly_rollups_and_only_sends_real_usage_hours(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_db(db_path)
+
+    fixed_now = _cli.datetime(2025, 11, 19, 3, 15, tzinfo=_cli.timezone.utc)
+    monkeypatch.setattr(_cli, "_utc_now", lambda: fixed_now)
+
+    payload = build_payload(_config(db_path))
+
+    hourly_rollups = [row for row in payload["rollups"] if "T" in row["usageDate"]]
+    assert len(hourly_rollups) == 2
+
+    hourly_by_usage_date = {row["usageDate"]: row for row in hourly_rollups}
+
+    midnight_hour = hourly_by_usage_date["2025-11-19T00:00:00Z"]
+    assert midnight_hour["requests"] == 3
+    assert midnight_hour["totalTokens"] == 175
+    assert midnight_hour["models"] == [
+        {
+            "estimatedCostUsd": 1.25,
+            "model": "gpt-5.4",
+            "requests": 3,
+            "tokens": 175,
+        }
+    ]
+
+    one_am_hour = hourly_by_usage_date["2025-11-19T01:00:00Z"]
+    assert one_am_hour["requests"] == 2
+    assert one_am_hour["totalTokens"] == 85
+    assert one_am_hour["models"] == [
+        {
+            "estimatedCostUsd": 0.5,
+            "model": "claude-sonnet-4",
+            "requests": 2,
+            "tokens": 85,
+        }
+    ]
+
+    assert "2025-11-19T03:00:00Z" not in hourly_by_usage_date
+
+
+def test_build_payload_can_send_heartbeat_only_when_no_rollups_exist(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_empty_db(db_path)
+
+    fixed_now = _cli.datetime(2026, 5, 23, 12, 0, tzinfo=_cli.timezone.utc)
+    monkeypatch.setattr(_cli, "_utc_now", lambda: fixed_now)
+    monkeypatch.setattr(_cli, "_iso_now", lambda: fixed_now.isoformat().replace("+00:00", "Z"))
+
+    payload = build_payload(_config(db_path))
+
+    assert payload["generatedAt"] == "2026-05-23T12:00:00Z"
+    assert payload["rollups"] == []
 
 
 def test_diagnose_config_reports_missing_ingest_settings(tmp_path):
