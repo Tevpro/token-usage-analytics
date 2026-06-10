@@ -52,7 +52,7 @@ type WorkspaceRecord = {
 
 type WorkspaceSelection = {
   latestCreatedAt: number
-  latestDay: string
+  latestDay: string | null
   workspace: WorkspaceRecord
 }
 
@@ -192,10 +192,6 @@ export async function ingestExternalRollupsToD1(
   env: CloudflareAppEnv,
   payload: ExternalIngestPayload,
 ): Promise<SyncResult> {
-  if (payload.rollups.length === 0) {
-    throw new Error('Ingest payload did not include any rollups.')
-  }
-
   const workspace = getExternalWorkspaceConfig(payload)
   const environment = payload.environment || env.APP_ENV || 'production'
   const nowMs = Date.parse(payload.generatedAt || '') || Date.now()
@@ -203,7 +199,15 @@ export async function ingestExternalRollupsToD1(
     .map((rollup) => normalizeExternalRollup(rollup, workspace.provider))
     .sort((left, right) => left.day.localeCompare(right.day))
 
-  await dbEnsureWorkspace(env.DB, workspace)
+  await dbEnsureWorkspace(env.DB, workspace, nowMs)
+
+  if (dayEntries.length === 0) {
+    return {
+      rowsWritten: 0,
+      sourceLabel: payload.sourceLabel || `Live ${workspace.provider} plugin data`,
+      syncedAt: new Date(nowMs).toISOString(),
+    }
+  }
 
   const firstDay = dayEntries[0].day
   const lastDay = dayEntries[dayEntries.length - 1].day
@@ -335,7 +339,7 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
   const dayEntries = [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
   const nowMs = Date.now()
 
-  await dbEnsureWorkspace(env.DB, workspace)
+  await dbEnsureWorkspace(env.DB, workspace, nowMs)
   if (dayEntries.length === 0) {
     return {
       rowsWritten: 0,
@@ -421,9 +425,25 @@ async function loadSnapshotFromD1(
 ): Promise<DashboardSnapshot> {
   const workspaceIds = selections.map((selection) => selection.workspace.id)
   const rows = await loadDailyRollups(env.DB, workspaceIds, getDaysBack(env))
+  const availableProjects = selections.map(({ workspace }) => ({
+    projectId: workspace.id,
+    projectName: workspace.name,
+    projectProvider: workspace.provider,
+    projectSlug: workspace.slug,
+  }))
+  const latestCreatedAt = Math.max(
+    Math.max(...rows.map((row) => row.createdAt || 0), 0),
+    Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0),
+  )
 
   if (rows.length === 0) {
-    return buildFallbackDashboardSnapshot('No D1 rollups were found for the selected projects.')
+    return buildHeartbeatOnlySnapshot({
+      availableProjects,
+      generatedAt: new Date(latestCreatedAt).toISOString(),
+      sourceLabel,
+      statusNote: buildCombinedStatusNote(selections),
+      workspaceName: availableProjects.length === 1 ? availableProjects[0].projectName : 'All projects',
+    })
   }
 
   const firstDay = getRangeStart(rows)
@@ -434,13 +454,6 @@ async function loadSnapshotFromD1(
   const dailyModelRowsByDay = rawModelRowsByDay.filter((row) => !isTimestampBucket(row.day))
   const hourlyModelRowsByDay = rawModelRowsByDay.filter((row) => isTimestampBucket(row.day))
   const issuesByDay = await loadIssues(env.DB, workspaceIds, firstDay, lastDay)
-  const availableProjects = selections.map(({ workspace }) => ({
-    projectId: workspace.id,
-    projectName: workspace.name,
-    projectProvider: workspace.provider,
-    projectSlug: workspace.slug,
-  }))
-  const latestCreatedAt = Math.max(...rows.map((row) => row.createdAt || 0), 0)
   const hourlyRows = (await safelyLoadOpenAiHourlyRows(env, selections, rows)) || storedHourlyRows
   const resolvedDailyRows = dailyRows.length > 0 ? dailyRows : aggregateRollupRowsByDay(storedHourlyRows)
   const resolvedModelRowsByDay =
@@ -479,20 +492,20 @@ async function selectDashboardWorkspaces(
               workspaces.slug as slug,
               workspaces.name as name,
               workspaces.provider as provider,
-              MAX(daily_usage_rollups.created_at) as latestCreatedAt,
+              COALESCE(workspaces.last_ingested_at, MAX(daily_usage_rollups.created_at), workspaces.created_at) as latestCreatedAt,
               MAX(daily_usage_rollups.usage_date) as latestDay
        FROM workspaces
-       INNER JOIN daily_usage_rollups ON daily_usage_rollups.workspace_id = workspaces.id
-       GROUP BY workspaces.id, workspaces.slug, workspaces.name, workspaces.provider
+       LEFT JOIN daily_usage_rollups ON daily_usage_rollups.workspace_id = workspaces.id
+       GROUP BY workspaces.id, workspaces.slug, workspaces.name, workspaces.provider, workspaces.last_ingested_at, workspaces.created_at
        ORDER BY CASE WHEN ? != '' AND workspaces.slug = ? THEN 0 ELSE 1 END,
-                MAX(daily_usage_rollups.created_at) DESC,
+                COALESCE(workspaces.last_ingested_at, MAX(daily_usage_rollups.created_at), workspaces.created_at) DESC,
                 workspaces.name ASC`,
     )
     .bind(slug, slug)
     .all<{
       id: string
       latestCreatedAt: number
-      latestDay: string
+      latestDay: string | null
       name: string
       provider: string
       slug: string
@@ -510,18 +523,71 @@ async function selectDashboardWorkspaces(
   }))
 }
 
-async function dbEnsureWorkspace(db: D1Database, workspace: WorkspaceRecord) {
+async function dbEnsureWorkspace(db: D1Database, workspace: WorkspaceRecord, lastIngestedAt?: number) {
   await db
     .prepare(
-      `INSERT INTO workspaces (id, slug, name, provider, created_at)
-       VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO workspaces (id, slug, name, provider, created_at, last_ingested_at)
+       VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(slug) DO UPDATE SET
          id = excluded.id,
          name = excluded.name,
-         provider = excluded.provider`,
+         provider = excluded.provider,
+         last_ingested_at = COALESCE(excluded.last_ingested_at, workspaces.last_ingested_at)`,
     )
-    .bind(workspace.id, workspace.slug, workspace.name, workspace.provider, Date.now())
+    .bind(workspace.id, workspace.slug, workspace.name, workspace.provider, Date.now(), lastIngestedAt || null)
     .run()
+}
+
+function buildHeartbeatOnlySnapshot(input: {
+  availableProjects: DashboardProjectOption[]
+  generatedAt: string
+  sourceLabel: string
+  statusNote: string
+  workspaceName: string
+}): DashboardSnapshot {
+  const anchorTimestamp = Date.parse(input.generatedAt)
+  const nowIso = new Date().toISOString()
+  const anchorHour = Number.isFinite(anchorTimestamp)
+    ? new Date(anchorTimestamp).toISOString().slice(0, 13) + ':00:00Z'
+    : nowIso.slice(0, 13) + ':00:00Z'
+  const anchorDay = Number.isFinite(anchorTimestamp) ? new Date(anchorTimestamp).toISOString().slice(0, 10) : nowIso.slice(0, 10)
+  const heartbeatDailyRows = input.availableProjects.map((project) => ({
+    ...project,
+    cachedTokens: 0,
+    cost: 0,
+    day: anchorDay,
+    inputTokens: 0,
+    outputTokens: 0,
+    requests: 0,
+    totalTokens: 0,
+  }))
+  const heartbeatHourlyRows = input.availableProjects.map((project) => ({
+    ...project,
+    cachedTokens: 0,
+    cost: 0,
+    day: anchorHour,
+    inputTokens: 0,
+    outputTokens: 0,
+    requests: 0,
+    totalTokens: 0,
+  }))
+
+  return buildSnapshotFromRollups({
+    availableProjects: input.availableProjects,
+    dailyRows: heartbeatDailyRows,
+    environment: 'production',
+    generatedAt: input.generatedAt,
+    granularity: 'day',
+    hourlyRows: heartbeatHourlyRows,
+    issues: [],
+    issuesByDay: [],
+    models: [],
+    modelRowsByDay: [],
+    selectedProjectIds: input.availableProjects.map((project) => project.projectId),
+    sourceLabel: input.sourceLabel,
+    statusNote: input.statusNote,
+    workspaceName: input.workspaceName,
+  })
 }
 
 async function loadDailyRollups(db: D1Database, workspaceIds: string[], daysBack: number) {
@@ -1036,7 +1102,7 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
   return created
 }
 
-function buildSourceLabel(provider: string, createdAt: number, latestDay: string) {
+function buildSourceLabel(provider: string, createdAt: number, latestDay: string | null) {
   return `${getSourceFreshnessPrefix(createdAt, latestDay)} ${provider} data`
 }
 
@@ -1052,21 +1118,22 @@ function buildCombinedSourceLabel(selections: WorkspaceSelection[]) {
 
   const providers = [...new Set(selections.map((selection) => selection.workspace.provider))]
   const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
-  const latestDay = [...selections.map((selection) => selection.latestDay)].sort().at(-1) || ''
+  const latestDay = [...selections.map((selection) => selection.latestDay || '')].sort().at(-1) || ''
   const freshness = getSourceFreshnessPrefix(freshestCreatedAt, latestDay)
   return providers.length === 1 ? `${freshness} ${providers[0]} project data` : `${freshness} multi-source project data`
 }
 
-function getSourceFreshnessPrefix(createdAt: number, latestDay: string) {
-  if (getUtcDayLag(latestDay) > MAX_ROLLUP_DAY_LAG_DAYS) {
+function getSourceFreshnessPrefix(createdAt: number, latestDay: string | null) {
+  if (latestDay && getUtcDayLag(latestDay) > MAX_ROLLUP_DAY_LAG_DAYS) {
     return 'Stale'
   }
 
   return Date.now() - createdAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'
 }
 
-function buildStatusNote(provider: string, createdAt: number, latestDay: string) {
-  return `${provider} rollups last updated ${formatRelativeAge(createdAt)} and served from Cloudflare D1. Latest rollup date: ${latestDay}.`
+function buildStatusNote(provider: string, createdAt: number, latestDay: string | null) {
+  const latestRollupLabel = latestDay || 'n/a'
+  return `${provider} rollups last updated ${formatRelativeAge(createdAt)} and served from Cloudflare D1. Latest rollup date: ${latestRollupLabel}.`
 }
 
 function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
@@ -1080,7 +1147,7 @@ function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
   }
 
   const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
-  const latestDay = [...selections.map((selection) => selection.latestDay)].sort().at(-1) || 'n/a'
+  const latestDay = [...selections.map((selection) => selection.latestDay || '')].sort().at(-1) || 'n/a'
   return `${selections.length} projects are contributing rollups from Cloudflare D1. Last refresh ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${latestDay}.`
 }
 
