@@ -502,16 +502,10 @@ def fetch_hourly_rollups(
         GROUP BY usage_date
         ORDER BY usage_date ASC
     """
-    existing_rows = {
-        str(row["usage_date"]): _normalize_rollup_row(row)
+    return [
+        _normalize_rollup_row(row)
         for row in connection.execute(query, (int(window_start.timestamp()), int(window_end.timestamp())))
-    }
-
-    rows: list[dict[str, Any]] = []
-    for hour_offset in range(hours):
-        usage_date = (window_start + timedelta(hours=hour_offset)).strftime('%Y-%m-%dT%H:00:00Z')
-        rows.append(existing_rows.get(usage_date, _empty_rollup_row(usage_date)))
-    return rows
+    ]
 
 
 def fetch_hourly_model_rollups(
@@ -565,19 +559,6 @@ def _normalize_rollup_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "reasoning_tokens": int(row["reasoning_tokens"] or 0),
         "total_tokens": int(row["total_tokens"] or 0),
         "cost_usd": float(row["cost_usd"] or 0),
-    }
-
-
-def _empty_rollup_row(usage_date: str) -> dict[str, Any]:
-    return {
-        "usage_date": usage_date,
-        "api_calls": 0,
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cached_tokens": 0,
-        "reasoning_tokens": 0,
-        "total_tokens": 0,
-        "cost_usd": 0.0,
     }
 
 

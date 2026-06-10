@@ -107,6 +107,31 @@ def _make_db(path: Path) -> None:
     conn.close()
 
 
+def _make_empty_db(path: Path) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE sessions (
+            id TEXT PRIMARY KEY,
+            source TEXT,
+            model TEXT,
+            started_at REAL,
+            ended_at REAL,
+            api_call_count INTEGER DEFAULT 0,
+            input_tokens INTEGER DEFAULT 0,
+            output_tokens INTEGER DEFAULT 0,
+            cache_read_tokens INTEGER DEFAULT 0,
+            cache_write_tokens INTEGER DEFAULT 0,
+            reasoning_tokens INTEGER DEFAULT 0,
+            estimated_cost_usd REAL,
+            actual_cost_usd REAL
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def _config(db_path: Path) -> TokenAnalyticsConfig:
     return TokenAnalyticsConfig(
         db_path=db_path,
@@ -161,7 +186,7 @@ def test_build_payload_aggregates_tokens_costs_and_models(tmp_path):
     assert day["models"][1]["estimatedCostUsd"] == 0.5
 
 
-def test_build_payload_emits_zero_value_hourly_rollups_for_idle_hours(tmp_path, monkeypatch):
+def test_build_payload_omits_idle_hourly_rollups_and_only_sends_real_usage_hours(tmp_path, monkeypatch):
     db_path = tmp_path / "state.db"
     _make_db(db_path)
 
@@ -171,7 +196,7 @@ def test_build_payload_emits_zero_value_hourly_rollups_for_idle_hours(tmp_path, 
     payload = build_payload(_config(db_path))
 
     hourly_rollups = [row for row in payload["rollups"] if "T" in row["usageDate"]]
-    assert len(hourly_rollups) == 24
+    assert len(hourly_rollups) == 2
 
     hourly_by_usage_date = {row["usageDate"]: row for row in hourly_rollups}
 
@@ -199,18 +224,21 @@ def test_build_payload_emits_zero_value_hourly_rollups_for_idle_hours(tmp_path, 
         }
     ]
 
-    idle_hour = hourly_by_usage_date["2025-11-19T03:00:00Z"]
-    assert idle_hour == {
-        "usageDate": "2025-11-19T03:00:00Z",
-        "requests": 0,
-        "totalTokens": 0,
-        "inputTokens": 0,
-        "outputTokens": 0,
-        "cachedTokens": 0,
-        "reasoningTokens": 0,
-        "estimatedCostUsd": 0.0,
-        "models": [],
-    }
+    assert "2025-11-19T03:00:00Z" not in hourly_by_usage_date
+
+
+def test_build_payload_can_send_heartbeat_only_when_no_rollups_exist(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_empty_db(db_path)
+
+    fixed_now = _cli.datetime(2026, 5, 23, 12, 0, tzinfo=_cli.timezone.utc)
+    monkeypatch.setattr(_cli, "_utc_now", lambda: fixed_now)
+    monkeypatch.setattr(_cli, "_iso_now", lambda: fixed_now.isoformat().replace("+00:00", "Z"))
+
+    payload = build_payload(_config(db_path))
+
+    assert payload["generatedAt"] == "2026-05-23T12:00:00Z"
+    assert payload["rollups"] == []
 
 
 def test_diagnose_config_reports_missing_ingest_settings(tmp_path):
