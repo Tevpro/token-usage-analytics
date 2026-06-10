@@ -10,6 +10,7 @@ import {
   buildSnapshotFromRollups,
   calculateCachedShare,
 } from '#/lib/token-analytics'
+import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
 
 type DailyRollupRow = DashboardProjectOption & {
   cachedTokens: number
@@ -98,7 +99,16 @@ type DayAccumulator = {
     severity: 'high' | 'medium' | 'low'
     title: string
   }>
-  models: Map<string, { cost?: number; model: string; provider: string; requests: number; tokens: number }>
+  models: Map<
+    string,
+    {
+      cost?: number
+      model: string
+      provider: string
+      requests: number
+      tokens: number
+    }
+  >
   outputTokens: number
   p95LatencyMs: number
   requests: number
@@ -157,7 +167,9 @@ const FRESHNESS_WINDOW_MS = 2 * 60 * 60 * 1000
 const MAX_ROLLUP_DAY_LAG_DAYS = 1
 const OPENAI_PROVIDER = 'OpenAI'
 
-export async function loadDashboardSnapshotForRequest(env: CloudflareAppEnv): Promise<SnapshotLoadResult> {
+export async function loadDashboardSnapshotForRequest(
+  env: CloudflareAppEnv,
+): Promise<SnapshotLoadResult> {
   const selectedWorkspaces = await selectDashboardWorkspaces(env)
   if (selectedWorkspaces.length > 0) {
     const snapshot = await loadSnapshotFromD1(env, selectedWorkspaces)
@@ -167,9 +179,16 @@ export async function loadDashboardSnapshotForRequest(env: CloudflareAppEnv): Pr
   if (env.OPENAI_API_KEY) {
     try {
       const syncResult = await syncOpenAiUsageToD1(env)
-      const workspaces = await selectDashboardWorkspaces(env, getOpenAiWorkspaceConfig(env).slug)
+      const workspaces = await selectDashboardWorkspaces(
+        env,
+        getOpenAiWorkspaceConfig(env).slug,
+      )
       if (workspaces.length > 0) {
-        const snapshot = await loadSnapshotFromD1(env, workspaces, syncResult.sourceLabel)
+        const snapshot = await loadSnapshotFromD1(
+          env,
+          workspaces,
+          syncResult.sourceLabel,
+        )
         return { snapshot, syncResult }
       }
     } catch (error) {
@@ -204,7 +223,8 @@ export async function ingestExternalRollupsToD1(
   if (dayEntries.length === 0) {
     return {
       rowsWritten: 0,
-      sourceLabel: payload.sourceLabel || `Live ${workspace.provider} plugin data`,
+      sourceLabel:
+        payload.sourceLabel || `Live ${workspace.provider} plugin data`,
       syncedAt: new Date(nowMs).toISOString(),
     }
   }
@@ -213,11 +233,9 @@ export async function ingestExternalRollupsToD1(
   const lastDay = dayEntries[dayEntries.length - 1].day
 
   await env.DB.batch([
-    env.DB.prepare('DELETE FROM issue_events WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?').bind(
-      workspace.id,
-      firstDay,
-      lastDay,
-    ),
+    env.DB.prepare(
+      'DELETE FROM issue_events WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
+    ).bind(workspace.id, firstDay, lastDay),
     env.DB.prepare(
       'DELETE FROM daily_usage_rollups WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
     ).bind(workspace.id, firstDay, lastDay),
@@ -252,7 +270,9 @@ export async function ingestExternalRollupsToD1(
       ),
     )
 
-    for (const [, values] of [...dayEntry.models.entries()].sort((left, right) => right[1].tokens - left[1].tokens)) {
+    for (const [, values] of [...dayEntry.models.entries()].sort(
+      (left, right) => right[1].tokens - left[1].tokens,
+    )) {
       const modelId = `${rollupId}:${values.provider}:${values.model}`
       statements.push(
         env.DB.prepare(
@@ -270,28 +290,39 @@ export async function ingestExternalRollupsToD1(
     }
   }
 
-  const issueStatements = buildIssueStatements(env.DB, workspace.id, dayEntries, nowMs)
+  const issueStatements = buildIssueStatements(
+    env.DB,
+    workspace.id,
+    dayEntries,
+    nowMs,
+  )
   await env.DB.batch([...statements, ...issueStatements])
 
   return {
     rowsWritten: dayEntries.length,
-    sourceLabel: payload.sourceLabel || `Live ${workspace.provider} plugin data`,
+    sourceLabel:
+      payload.sourceLabel || `Live ${workspace.provider} plugin data`,
     syncedAt: new Date(nowMs).toISOString(),
   }
 }
 
-export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncResult> {
+export async function syncOpenAiUsageToD1(
+  env: CloudflareAppEnv,
+): Promise<SyncResult> {
   const apiKey = env.OPENAI_API_KEY
   if (!apiKey) {
     throw new Error('OPENAI_API_KEY is missing from the Worker runtime.')
   }
 
   const workspace = getOpenAiWorkspaceConfig(env)
-  const environment = env.OPENAI_USAGE_ENVIRONMENT || env.APP_ENV || 'production'
+  const environment =
+    env.OPENAI_USAGE_ENVIRONMENT || env.APP_ENV || 'production'
   const daysBack = getDaysBack(env)
   const now = new Date()
   const startDay = shiftUtcDay(formatUtcDay(now), -(daysBack - 1))
-  const startTime = Math.floor(new Date(`${startDay}T00:00:00Z`).getTime() / 1000)
+  const startTime = Math.floor(
+    new Date(`${startDay}T00:00:00Z`).getTime() / 1000,
+  )
 
   const [usageResponse, costResponse] = await Promise.all([
     fetchOpenAiUsage(apiKey, startTime, daysBack),
@@ -333,10 +364,15 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
   for (const bucket of costResponse.data ?? []) {
     const day = formatUtcDayFromSeconds(bucket.start_time)
     const entry = getOrCreateDay(dayMap, day)
-    entry.cost += (bucket.results ?? []).reduce((sum, result) => sum + toNumber(result.amount?.value), 0)
+    entry.cost += (bucket.results ?? []).reduce(
+      (sum, result) => sum + toNumber(result.amount?.value),
+      0,
+    )
   }
 
-  const dayEntries = [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
+  const dayEntries = [...dayMap.values()].sort((left, right) =>
+    left.day.localeCompare(right.day),
+  )
   const nowMs = Date.now()
 
   await dbEnsureWorkspace(env.DB, workspace, nowMs)
@@ -352,11 +388,9 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
   const lastDay = dayEntries[dayEntries.length - 1].day
 
   await env.DB.batch([
-    env.DB.prepare('DELETE FROM issue_events WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?').bind(
-      workspace.id,
-      firstDay,
-      lastDay,
-    ),
+    env.DB.prepare(
+      'DELETE FROM issue_events WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
+    ).bind(workspace.id, firstDay, lastDay),
     env.DB.prepare(
       'DELETE FROM daily_usage_rollups WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
     ).bind(workspace.id, firstDay, lastDay),
@@ -388,9 +422,15 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
       ),
     )
 
-    for (const [, values] of [...dayEntry.models.entries()].sort((left, right) => right[1].tokens - left[1].tokens)) {
+    for (const [, values] of [...dayEntry.models.entries()].sort(
+      (left, right) => right[1].tokens - left[1].tokens,
+    )) {
       const allocatedCost =
-        dayEntry.totalTokens > 0 ? roundCurrency((dayEntry.cost * values.tokens) / dayEntry.totalTokens) : 0
+        dayEntry.totalTokens > 0
+          ? roundCurrency(
+              (dayEntry.cost * values.tokens) / dayEntry.totalTokens,
+            )
+          : 0
       const modelId = `${rollupId}:${values.provider}:${values.model}`
       statements.push(
         env.DB.prepare(
@@ -408,7 +448,12 @@ export async function syncOpenAiUsageToD1(env: CloudflareAppEnv): Promise<SyncRe
     }
   }
 
-  const issueStatements = buildIssueStatements(env.DB, workspace.id, dayEntries, nowMs)
+  const issueStatements = buildIssueStatements(
+    env.DB,
+    workspace.id,
+    dayEntries,
+    nowMs,
+  )
   await env.DB.batch([...statements, ...issueStatements])
 
   return {
@@ -433,7 +478,10 @@ async function loadSnapshotFromD1(
   }))
   const latestCreatedAt = Math.max(
     Math.max(...rows.map((row) => row.createdAt || 0), 0),
-    Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0),
+    Math.max(
+      ...selections.map((selection) => selection.latestCreatedAt || 0),
+      0,
+    ),
   )
 
   if (rows.length === 0) {
@@ -442,22 +490,41 @@ async function loadSnapshotFromD1(
       generatedAt: new Date(latestCreatedAt).toISOString(),
       sourceLabel,
       statusNote: buildCombinedStatusNote(selections),
-      workspaceName: availableProjects.length === 1 ? availableProjects[0].projectName : 'All projects',
+      workspaceName:
+        availableProjects.length === 1
+          ? availableProjects[0].projectName
+          : 'All projects',
     })
   }
 
   const firstDay = getRangeStart(rows)
   const lastDay = getRangeEnd(rows)
-  const rawModelRowsByDay = await loadModelUsageByDay(env.DB, workspaceIds, firstDay, lastDay)
+  const rawModelRowsByDay = await loadModelUsageByDay(
+    env.DB,
+    workspaceIds,
+    firstDay,
+    lastDay,
+  )
   const dailyRows = rows.filter((row) => !isTimestampBucket(row.day))
   const storedHourlyRows = rows.filter((row) => isTimestampBucket(row.day))
-  const dailyModelRowsByDay = rawModelRowsByDay.filter((row) => !isTimestampBucket(row.day))
-  const hourlyModelRowsByDay = rawModelRowsByDay.filter((row) => isTimestampBucket(row.day))
+  const dailyModelRowsByDay = rawModelRowsByDay.filter(
+    (row) => !isTimestampBucket(row.day),
+  )
+  const hourlyModelRowsByDay = rawModelRowsByDay.filter((row) =>
+    isTimestampBucket(row.day),
+  )
   const issuesByDay = await loadIssues(env.DB, workspaceIds, firstDay, lastDay)
-  const hourlyRows = (await safelyLoadOpenAiHourlyRows(env, selections, rows)) || storedHourlyRows
-  const resolvedDailyRows = dailyRows.length > 0 ? dailyRows : aggregateRollupRowsByDay(storedHourlyRows)
+  const hourlyRows =
+    (await safelyLoadOpenAiHourlyRows(env, selections, rows)) ||
+    storedHourlyRows
+  const resolvedDailyRows =
+    dailyRows.length > 0
+      ? dailyRows
+      : aggregateRollupRowsByDay(storedHourlyRows)
   const resolvedModelRowsByDay =
-    dailyModelRowsByDay.length > 0 ? dailyModelRowsByDay : aggregateModelRowsByDay(hourlyModelRowsByDay)
+    dailyModelRowsByDay.length > 0
+      ? dailyModelRowsByDay
+      : aggregateModelRowsByDay(hourlyModelRowsByDay)
   const models =
     hourlyModelRowsByDay.length > 0
       ? summarizeModelRows(resolvedModelRowsByDay)
@@ -468,7 +535,8 @@ async function loadSnapshotFromD1(
     dailyRows: resolvedDailyRows,
     environment: rows[rows.length - 1].environment,
     generatedAt: new Date(latestCreatedAt).toISOString(),
-    hourlyModelRowsByDay: hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : undefined,
+    hourlyModelRowsByDay:
+      hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : undefined,
     hourlyRows: hourlyRows.length > 0 ? hourlyRows : undefined,
     issues: summarizeIssues(issuesByDay),
     issuesByDay,
@@ -477,7 +545,10 @@ async function loadSnapshotFromD1(
     selectedProjectIds: availableProjects.map((project) => project.projectId),
     sourceLabel,
     statusNote: buildCombinedStatusNote(selections),
-    workspaceName: availableProjects.length === 1 ? availableProjects[0].projectName : 'All projects',
+    workspaceName:
+      availableProjects.length === 1
+        ? availableProjects[0].projectName
+        : 'All projects',
   })
 }
 
@@ -486,9 +557,8 @@ async function selectDashboardWorkspaces(
   preferredSlug?: string,
 ): Promise<WorkspaceSelection[]> {
   const slug = preferredSlug || env.DASHBOARD_WORKSPACE_SLUG || ''
-  const rows = await env.DB
-    .prepare(
-      `SELECT workspaces.id as id,
+  const rows = await env.DB.prepare(
+    `SELECT workspaces.id as id,
               workspaces.slug as slug,
               workspaces.name as name,
               workspaces.provider as provider,
@@ -500,7 +570,7 @@ async function selectDashboardWorkspaces(
        ORDER BY CASE WHEN ? != '' AND workspaces.slug = ? THEN 0 ELSE 1 END,
                 COALESCE(workspaces.last_ingested_at, MAX(daily_usage_rollups.created_at), workspaces.created_at) DESC,
                 workspaces.name ASC`,
-    )
+  )
     .bind(slug, slug)
     .all<{
       id: string
@@ -523,7 +593,11 @@ async function selectDashboardWorkspaces(
   }))
 }
 
-async function dbEnsureWorkspace(db: D1Database, workspace: WorkspaceRecord, lastIngestedAt?: number) {
+async function dbEnsureWorkspace(
+  db: D1Database,
+  workspace: WorkspaceRecord,
+  lastIngestedAt?: number,
+) {
   await db
     .prepare(
       `INSERT INTO workspaces (id, slug, name, provider, created_at, last_ingested_at)
@@ -534,7 +608,14 @@ async function dbEnsureWorkspace(db: D1Database, workspace: WorkspaceRecord, las
          provider = excluded.provider,
          last_ingested_at = COALESCE(excluded.last_ingested_at, workspaces.last_ingested_at)`,
     )
-    .bind(workspace.id, workspace.slug, workspace.name, workspace.provider, Date.now(), lastIngestedAt || null)
+    .bind(
+      workspace.id,
+      workspace.slug,
+      workspace.name,
+      workspace.provider,
+      Date.now(),
+      lastIngestedAt || null,
+    )
     .run()
 }
 
@@ -550,7 +631,9 @@ function buildHeartbeatOnlySnapshot(input: {
   const anchorHour = Number.isFinite(anchorTimestamp)
     ? new Date(anchorTimestamp).toISOString().slice(0, 13) + ':00:00Z'
     : nowIso.slice(0, 13) + ':00:00Z'
-  const anchorDay = Number.isFinite(anchorTimestamp) ? new Date(anchorTimestamp).toISOString().slice(0, 10) : nowIso.slice(0, 10)
+  const anchorDay = Number.isFinite(anchorTimestamp)
+    ? new Date(anchorTimestamp).toISOString().slice(0, 10)
+    : nowIso.slice(0, 10)
   const heartbeatDailyRows = input.availableProjects.map((project) => ({
     ...project,
     cachedTokens: 0,
@@ -583,14 +666,20 @@ function buildHeartbeatOnlySnapshot(input: {
     issuesByDay: [],
     models: [],
     modelRowsByDay: [],
-    selectedProjectIds: input.availableProjects.map((project) => project.projectId),
+    selectedProjectIds: input.availableProjects.map(
+      (project) => project.projectId,
+    ),
     sourceLabel: input.sourceLabel,
     statusNote: input.statusNote,
     workspaceName: input.workspaceName,
   })
 }
 
-async function loadDailyRollups(db: D1Database, workspaceIds: string[], daysBack: number) {
+async function loadDailyRollups(
+  db: D1Database,
+  workspaceIds: string[],
+  daysBack: number,
+) {
   if (workspaceIds.length === 0) {
     return [] satisfies DailyRollupRow[]
   }
@@ -625,7 +714,12 @@ async function loadDailyRollups(db: D1Database, workspaceIds: string[], daysBack
   return result.results
 }
 
-async function loadModelSummary(db: D1Database, workspaceIds: string[], startDay: string, endDay: string) {
+async function loadModelSummary(
+  db: D1Database,
+  workspaceIds: string[],
+  startDay: string,
+  endDay: string,
+) {
   if (workspaceIds.length === 0) {
     return [] satisfies ModelSummaryRow[]
   }
@@ -652,7 +746,12 @@ async function loadModelSummary(db: D1Database, workspaceIds: string[], startDay
   return result.results
 }
 
-async function loadModelUsageByDay(db: D1Database, workspaceIds: string[], startDay: string, endDay: string) {
+async function loadModelUsageByDay(
+  db: D1Database,
+  workspaceIds: string[],
+  startDay: string,
+  endDay: string,
+) {
   if (workspaceIds.length === 0) {
     return [] satisfies DashboardModelDailyUsage[]
   }
@@ -684,7 +783,12 @@ async function loadModelUsageByDay(db: D1Database, workspaceIds: string[], start
   return result.results satisfies DashboardModelDailyUsage[]
 }
 
-async function loadIssues(db: D1Database, workspaceIds: string[], startDay: string, endDay: string) {
+async function loadIssues(
+  db: D1Database,
+  workspaceIds: string[],
+  startDay: string,
+  endDay: string,
+) {
   if (workspaceIds.length === 0) {
     return [] satisfies IssueRow[]
   }
@@ -707,11 +811,21 @@ async function loadIssues(db: D1Database, workspaceIds: string[], startDay: stri
 }
 
 function getRangeStart(rows: DailyRollupRow[]) {
-  return rows.map((row) => row.day.slice(0, 10)).sort().at(0) || ''
+  return (
+    rows
+      .map((row) => row.day.slice(0, 10))
+      .sort()
+      .at(0) || ''
+  )
 }
 
 function getRangeEnd(rows: DailyRollupRow[]) {
-  return rows.map((row) => row.day.slice(0, 10)).sort().at(-1) || ''
+  return (
+    rows
+      .map((row) => row.day.slice(0, 10))
+      .sort()
+      .at(-1) || ''
+  )
 }
 
 function isTimestampBucket(value: string) {
@@ -739,7 +853,11 @@ function aggregateRollupRowsByDay(rows: DailyRollupRow[]) {
     rowMap.set(key, { ...row, day })
   }
 
-  return [...rowMap.values()].sort((left, right) => left.day.localeCompare(right.day) || left.projectName.localeCompare(right.projectName))
+  return [...rowMap.values()].sort(
+    (left, right) =>
+      left.day.localeCompare(right.day) ||
+      left.projectName.localeCompare(right.projectName),
+  )
 }
 
 function aggregateModelRowsByDay(rows: DashboardModelDailyUsage[]) {
@@ -759,7 +877,10 @@ function aggregateModelRowsByDay(rows: DashboardModelDailyUsage[]) {
     rowMap.set(key, { ...row, day })
   }
 
-  return [...rowMap.values()].sort((left, right) => left.day.localeCompare(right.day) || right.tokens - left.tokens)
+  return [...rowMap.values()].sort(
+    (left, right) =>
+      left.day.localeCompare(right.day) || right.tokens - left.tokens,
+  )
 }
 
 function summarizeModelRows(rows: DashboardModelDailyUsage[]) {
@@ -784,7 +905,10 @@ function summarizeModelRows(rows: DashboardModelDailyUsage[]) {
     })
   }
 
-  return [...modelMap.values()].sort((left, right) => right.tokens - left.tokens || left.model.localeCompare(right.model))
+  return [...modelMap.values()].sort(
+    (left, right) =>
+      right.tokens - left.tokens || left.model.localeCompare(right.model),
+  )
 }
 
 function summarizeIssues(issueRows: DashboardIssueByDay[]) {
@@ -802,28 +926,38 @@ function summarizeIssues(issueRows: DashboardIssueByDay[]) {
   }
 
   return [...issueMap.values()]
-    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
+    .sort(
+      (left, right) =>
+        right.count - left.count || left.title.localeCompare(right.title),
+    )
     .map(({ count, severity, title }) => ({ count, severity, title }))
 }
 
-function buildIssueStatements(db: D1Database, workspaceId: string, days: DayAccumulator[], nowMs: number) {
+function buildIssueStatements(
+  db: D1Database,
+  workspaceId: string,
+  days: DayAccumulator[],
+  nowMs: number,
+) {
   const statements: D1PreparedStatement[] = []
 
   for (const day of days) {
     for (const [issueIndex, issue] of day.issues.entries()) {
       statements.push(
-        db.prepare(
-          'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ).bind(
-          `${workspaceId}:${day.day}:reported-${issueIndex}:${slugify(issue.title)}`,
-          workspaceId,
-          nowMs,
-          day.day,
-          issue.severity,
-          issue.title,
-          Math.max(0, issue.count),
-          issue.metadata ? JSON.stringify(issue.metadata) : null,
-        ),
+        db
+          .prepare(
+            'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          )
+          .bind(
+            `${workspaceId}:${day.day}:reported-${issueIndex}:${slugify(issue.title)}`,
+            workspaceId,
+            nowMs,
+            day.day,
+            issue.severity,
+            issue.title,
+            Math.max(0, issue.count),
+            issue.metadata ? JSON.stringify(issue.metadata) : null,
+          ),
       )
     }
   }
@@ -832,62 +966,76 @@ function buildIssueStatements(db: D1Database, workspaceId: string, days: DayAccu
     const previous = days[index - 1]
     const current = days[index]
 
-    if (previous.totalTokens > 0 && current.totalTokens >= previous.totalTokens * 1.5) {
+    if (
+      previous.totalTokens > 0 &&
+      current.totalTokens >= previous.totalTokens * 1.5
+    ) {
       statements.push(
-        db.prepare(
-          'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ).bind(
-          `${workspaceId}:${current.day}:token-spike`,
-          workspaceId,
-          nowMs,
-          current.day,
-          'high',
-          `Token volume jumped ${Math.round((current.totalTokens / previous.totalTokens) * 100)}% day over day`,
-          1,
-          JSON.stringify({ currentTokens: current.totalTokens, previousTokens: previous.totalTokens }),
-        ),
+        db
+          .prepare(
+            'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          )
+          .bind(
+            `${workspaceId}:${current.day}:token-spike`,
+            workspaceId,
+            nowMs,
+            current.day,
+            'high',
+            `Token volume jumped ${Math.round((current.totalTokens / previous.totalTokens) * 100)}% day over day`,
+            1,
+            JSON.stringify({
+              currentTokens: current.totalTokens,
+              previousTokens: previous.totalTokens,
+            }),
+          ),
       )
     }
 
     if (previous.cost > 0 && current.cost >= previous.cost * 1.5) {
       statements.push(
-        db.prepare(
-          'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ).bind(
-          `${workspaceId}:${current.day}:cost-spike`,
-          workspaceId,
-          nowMs,
-          current.day,
-          'medium',
-          `Tracked cost spiked ${Math.round((current.cost / previous.cost) * 100)}% day over day`,
-          1,
-          JSON.stringify({ currentCost: current.cost, previousCost: previous.cost }),
-        ),
+        db
+          .prepare(
+            'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          )
+          .bind(
+            `${workspaceId}:${current.day}:cost-spike`,
+            workspaceId,
+            nowMs,
+            current.day,
+            'medium',
+            `Tracked cost spiked ${Math.round((current.cost / previous.cost) * 100)}% day over day`,
+            1,
+            JSON.stringify({
+              currentCost: current.cost,
+              previousCost: previous.cost,
+            }),
+          ),
       )
     }
 
     const cacheRate = calculateCachedShare(current)
     if (current.inputTokens > 0 && cacheRate < 0.05) {
       statements.push(
-        db.prepare(
-          'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        ).bind(
-          `${workspaceId}:${current.day}:cache-drop`,
-          workspaceId,
-          nowMs,
-          current.day,
-          'medium',
-          'Cached token share fell below 5%',
-          1,
-          JSON.stringify({ cacheRate }),
-        ),
+        db
+          .prepare(
+            'INSERT INTO issue_events (id, workspace_id, occurred_at, usage_date, severity, title, count, metadata_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          )
+          .bind(
+            `${workspaceId}:${current.day}:cache-drop`,
+            workspaceId,
+            nowMs,
+            current.day,
+            'medium',
+            'Cached token share fell below 5%',
+            1,
+            JSON.stringify({ cacheRate }),
+          ),
       )
     }
   }
 
   return statements
 }
-
 
 async function safelyLoadOpenAiHourlyRows(
   env: CloudflareAppEnv,
@@ -905,7 +1053,11 @@ async function safelyLoadOpenAiHourlyRows(
   }
 
   try {
-    return await loadOpenAiHourlyRows(env.OPENAI_API_KEY, selection.workspace, rows)
+    return await loadOpenAiHourlyRows(
+      env.OPENAI_API_KEY,
+      selection.workspace,
+      rows,
+    )
   } catch {
     return undefined
   }
@@ -919,13 +1071,31 @@ async function loadOpenAiHourlyRows(
   const endHour = new Date()
   endHour.setUTCMinutes(0, 0, 0)
   const startHour = new Date(endHour.getTime() - 23 * 60 * 60 * 1000)
-  const usageResponse = await fetchOpenAiUsage(apiKey, Math.floor(startHour.getTime() / 1000), 24, '1h')
+  const usageResponse = await fetchOpenAiUsage(
+    apiKey,
+    Math.floor(startHour.getTime() / 1000),
+    24,
+    '1h',
+  )
   const rows = (usageResponse.data ?? []).map((bucket) => {
-    const timestamp = new Date(bucket.start_time * 1000).toISOString().slice(0, 13) + ':00:00Z'
-    const inputTokens = (bucket.results ?? []).reduce((sum, result) => sum + toNumber(result.input_tokens), 0)
-    const outputTokens = (bucket.results ?? []).reduce((sum, result) => sum + toNumber(result.output_tokens), 0)
-    const cachedTokens = (bucket.results ?? []).reduce((sum, result) => sum + toNumber(result.input_cached_tokens), 0)
-    const requests = (bucket.results ?? []).reduce((sum, result) => sum + toNumber(result.num_model_requests), 0)
+    const timestamp =
+      new Date(bucket.start_time * 1000).toISOString().slice(0, 13) + ':00:00Z'
+    const inputTokens = (bucket.results ?? []).reduce(
+      (sum, result) => sum + toNumber(result.input_tokens),
+      0,
+    )
+    const outputTokens = (bucket.results ?? []).reduce(
+      (sum, result) => sum + toNumber(result.output_tokens),
+      0,
+    )
+    const cachedTokens = (bucket.results ?? []).reduce(
+      (sum, result) => sum + toNumber(result.input_cached_tokens),
+      0,
+    )
+    const requests = (bucket.results ?? []).reduce(
+      (sum, result) => sum + toNumber(result.num_model_requests),
+      0,
+    )
     const totalTokens = inputTokens + outputTokens
 
     return {
@@ -948,7 +1118,10 @@ async function loadOpenAiHourlyRows(
   const tokenTotalsByDay = new Map<string, number>()
   for (const row of rows) {
     const day = row.day.slice(0, 10)
-    tokenTotalsByDay.set(day, (tokenTotalsByDay.get(day) || 0) + row.totalTokens)
+    tokenTotalsByDay.set(
+      day,
+      (tokenTotalsByDay.get(day) || 0) + row.totalTokens,
+    )
   }
 
   const costByDay = new Map<string, number>()
@@ -960,7 +1133,10 @@ async function loadOpenAiHourlyRows(
   return rows.map((row) => {
     const day = row.day.slice(0, 10)
     const totalTokensForDay = tokenTotalsByDay.get(day) || 0
-    const allocatedCost = totalTokensForDay > 0 ? ((costByDay.get(day) || 0) * row.totalTokens) / totalTokensForDay : 0
+    const allocatedCost =
+      totalTokensForDay > 0
+        ? ((costByDay.get(day) || 0) * row.totalTokens) / totalTokensForDay
+        : 0
     return {
       ...row,
       cost: roundCurrency(allocatedCost),
@@ -980,7 +1156,11 @@ async function fetchOpenAiUsage(
   )
 }
 
-async function fetchOpenAiCosts(apiKey: string, startTime: number, daysBack: number) {
+async function fetchOpenAiCosts(
+  apiKey: string,
+  startTime: number,
+  daysBack: number,
+) {
   return fetchOpenAiJson<OpenAiCostResponse>(
     apiKey,
     `/v1/organization/costs?start_time=${startTime}&bucket_width=1d&limit=${daysBack}`,
@@ -1004,7 +1184,11 @@ async function fetchOpenAiJson<T>(apiKey: string, path: string): Promise<T> {
 }
 
 function getOpenAiWorkspaceConfig(env: CloudflareAppEnv): WorkspaceRecord {
-  const slug = slugify(env.OPENAI_USAGE_WORKSPACE_SLUG || env.OPENAI_USAGE_WORKSPACE_NAME || 'openai-organization')
+  const slug = slugify(
+    env.OPENAI_USAGE_WORKSPACE_SLUG ||
+      env.OPENAI_USAGE_WORKSPACE_NAME ||
+      'openai-organization',
+  )
   return {
     id: `workspace:${slug}`,
     name: env.OPENAI_USAGE_WORKSPACE_NAME || 'OpenAI Organization',
@@ -1013,7 +1197,9 @@ function getOpenAiWorkspaceConfig(env: CloudflareAppEnv): WorkspaceRecord {
   }
 }
 
-function getExternalWorkspaceConfig(payload: ExternalIngestPayload): WorkspaceRecord {
+function getExternalWorkspaceConfig(
+  payload: ExternalIngestPayload,
+): WorkspaceRecord {
   const name = payload.workspace?.name || 'Hermes Usage'
   const provider = payload.workspace?.provider || 'Hermes'
   const slug = slugify(payload.workspace?.slug || name)
@@ -1026,7 +1212,10 @@ function getExternalWorkspaceConfig(payload: ExternalIngestPayload): WorkspaceRe
 }
 
 function getDaysBack(env: CloudflareAppEnv) {
-  const parsed = Number.parseInt(env.OPENAI_USAGE_DAYS_BACK || `${DEFAULT_DAYS_BACK}`, 10)
+  const parsed = Number.parseInt(
+    env.OPENAI_USAGE_DAYS_BACK || `${DEFAULT_DAYS_BACK}`,
+    10,
+  )
   if (Number.isNaN(parsed)) {
     return DEFAULT_DAYS_BACK
   }
@@ -1040,9 +1229,21 @@ function normalizeExternalRollup(
   const inputTokens = Math.max(0, rollup.inputTokens)
   const outputTokens = Math.max(0, rollup.outputTokens)
   const cachedTokens = Math.max(0, rollup.cachedTokens || 0)
-  const totalTokens = Math.max(0, rollup.totalTokens || inputTokens + outputTokens + cachedTokens)
+  const totalTokens = Math.max(
+    0,
+    rollup.totalTokens || inputTokens + outputTokens + cachedTokens,
+  )
   const requests = Math.max(0, rollup.requests)
-  const models = new Map<string, { cost?: number; model: string; provider: string; requests: number; tokens: number }>()
+  const models = new Map<
+    string,
+    {
+      cost?: number
+      model: string
+      provider: string
+      requests: number
+      tokens: number
+    }
+  >()
 
   for (const model of rollup.models || []) {
     const provider = model.provider || defaultProvider
@@ -1091,7 +1292,16 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
     errorCount: 0,
     inputTokens: 0,
     issues: [],
-    models: new Map<string, { cost?: number; model: string; provider: string; requests: number; tokens: number }>(),
+    models: new Map<
+      string,
+      {
+        cost?: number
+        model: string
+        provider: string
+        requests: number
+        tokens: number
+      }
+    >(),
     outputTokens: 0,
     p95LatencyMs: 0,
     requests: 0,
@@ -1102,7 +1312,11 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
   return created
 }
 
-function buildSourceLabel(provider: string, createdAt: number, latestDay: string | null) {
+function buildSourceLabel(
+  provider: string,
+  createdAt: number,
+  latestDay: string | null,
+) {
   return `${getSourceFreshnessPrefix(createdAt, latestDay)} ${provider} data`
 }
 
@@ -1113,14 +1327,28 @@ function buildCombinedSourceLabel(selections: WorkspaceSelection[]) {
 
   if (selections.length === 1) {
     const selection = selections[0]
-    return buildSourceLabel(selection.workspace.provider, selection.latestCreatedAt, selection.latestDay)
+    return buildSourceLabel(
+      selection.workspace.provider,
+      selection.latestCreatedAt,
+      selection.latestDay,
+    )
   }
 
-  const providers = [...new Set(selections.map((selection) => selection.workspace.provider))]
-  const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
-  const latestDay = [...selections.map((selection) => selection.latestDay || '')].sort().at(-1) || ''
+  const providers = [
+    ...new Set(selections.map((selection) => selection.workspace.provider)),
+  ]
+  const freshestCreatedAt = Math.max(
+    ...selections.map((selection) => selection.latestCreatedAt || 0),
+    0,
+  )
+  const latestDay =
+    [...selections.map((selection) => selection.latestDay || '')]
+      .sort()
+      .at(-1) || ''
   const freshness = getSourceFreshnessPrefix(freshestCreatedAt, latestDay)
-  return providers.length === 1 ? `${freshness} ${providers[0]} project data` : `${freshness} multi-source project data`
+  return providers.length === 1
+    ? `${freshness} ${providers[0]} project data`
+    : `${freshness} multi-source project data`
 }
 
 function getSourceFreshnessPrefix(createdAt: number, latestDay: string | null) {
@@ -1131,7 +1359,11 @@ function getSourceFreshnessPrefix(createdAt: number, latestDay: string | null) {
   return Date.now() - createdAt <= FRESHNESS_WINDOW_MS ? 'Live' : 'Cached'
 }
 
-function buildStatusNote(_provider: string, createdAt: number, latestDay: string | null) {
+function buildStatusNote(
+  _provider: string,
+  createdAt: number,
+  latestDay: string | null,
+) {
   return `1 project is contributing rollups. Last update ${formatRelativeAge(createdAt)}. Latest rollup date: ${formatLatestRollupLabel(latestDay)}.`
 }
 
@@ -1142,11 +1374,21 @@ function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
 
   if (selections.length === 1) {
     const selection = selections[0]
-    return buildStatusNote(selection.workspace.provider, selection.latestCreatedAt, selection.latestDay)
+    return buildStatusNote(
+      selection.workspace.provider,
+      selection.latestCreatedAt,
+      selection.latestDay,
+    )
   }
 
-  const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
-  const latestDay = [...selections.map((selection) => selection.latestDay || '')].sort().at(-1) || 'n/a'
+  const freshestCreatedAt = Math.max(
+    ...selections.map((selection) => selection.latestCreatedAt || 0),
+    0,
+  )
+  const latestDay =
+    [...selections.map((selection) => selection.latestDay || '')]
+      .sort()
+      .at(-1) || 'n/a'
   return `${selections.length} projects are contributing rollups. Last update ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${formatLatestRollupLabel(latestDay)}.`
 }
 
@@ -1179,7 +1421,7 @@ function formatLatestRollupLabel(value: string | null) {
       hour: 'numeric',
       minute: '2-digit',
       month: 'short',
-      timeZone: 'America/Chicago',
+      timeZone: DASHBOARD_TIME_ZONE,
       timeZoneName: 'short',
       year: 'numeric',
     }).format(new Date(value))
@@ -1218,7 +1460,10 @@ function getUtcDayLag(day: string) {
   }
 
   const currentDayMs = Date.parse(`${formatUtcDay(new Date())}T00:00:00Z`)
-  return Math.max(0, Math.round((currentDayMs - latestDayMs) / (24 * 60 * 60 * 1000)))
+  return Math.max(
+    0,
+    Math.round((currentDayMs - latestDayMs) / (24 * 60 * 60 * 1000)),
+  )
 }
 
 function roundCurrency(value: number) {

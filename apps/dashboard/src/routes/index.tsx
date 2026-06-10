@@ -3,14 +3,26 @@ import type { ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
-import { Activity, ArrowUpRight, Bot, CalendarRange, RefreshCcw } from 'lucide-react'
+import {
+  Activity,
+  ArrowUpRight,
+  Bot,
+  CalendarRange,
+  RefreshCcw,
+} from 'lucide-react'
 
 import { Badge } from '#/components/ui/badge'
 import { Button } from '#/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Input } from '#/components/ui/input'
 import { Separator } from '#/components/ui/separator'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '#/components/ui/select'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '#/components/ui/select'
 import {
   Table,
   TableBody,
@@ -23,18 +35,25 @@ import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
 import { aggregateTrafficChartPoints } from '#/lib/chart-presentation'
 import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
+import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
-import type { TimeframePreset, TimeframeSelection } from '#/lib/dashboard-timeframe'
+import type {
+  TimeframePreset,
+  TimeframeSelection,
+} from '#/lib/dashboard-timeframe'
 import { loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
-import type { DashboardProjectSummary, DashboardSnapshot } from '#/lib/token-analytics'
+import type {
+  DashboardProjectSummary,
+  DashboardSnapshot,
+} from '#/lib/token-analytics'
 
-const DASHBOARD_TIME_ZONE = 'America/Chicago'
-
-const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(async () => {
-  const { getRuntimeEnv } = await import('#/lib/worker-env')
-  const result = await loadDashboardSnapshotForRequest(getRuntimeEnv())
-  return result.snapshot
-})
+const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(
+  async () => {
+    const { getRuntimeEnv } = await import('#/lib/worker-env')
+    const result = await loadDashboardSnapshotForRequest(getRuntimeEnv())
+    return result.snapshot
+  },
+)
 
 export const Route = createFileRoute('/')({
   loader: async () => getDashboardSnapshot(),
@@ -45,26 +64,47 @@ function Home() {
   const snapshot = Route.useLoaderData()
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
-  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
-  const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
-  const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
-  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
+  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() =>
+    getInitialTimeframeSelection(snapshot),
+  )
+  const [trafficChartMode, setTrafficChartMode] =
+    useState<TrafficChartMode>('bars')
+  const projectSnapshot = useMemo(
+    () => filterSnapshotByProjects(snapshot, selectedProjectIds),
+    [selectedProjectIds, snapshot],
+  )
+  const activeSnapshot = useMemo(
+    () => filterSnapshotByTimeframe(projectSnapshot, timeframe),
+    [projectSnapshot, timeframe],
+  )
   const agentDataStatus = useMemo(
     () =>
       getAgentDataStatus(projectSnapshot.headline.generatedAt, {
         latestRollupDay: projectSnapshot.filters.availableEndDay,
       }),
-    [projectSnapshot.filters.availableEndDay, projectSnapshot.headline.generatedAt],
+    [
+      projectSnapshot.filters.availableEndDay,
+      projectSnapshot.headline.generatedAt,
+    ],
   )
-  const bucketLabel = activeSnapshot.headline.granularity === 'hour' ? 'Hourly' : 'Daily'
-  const bucketColumnLabel = activeSnapshot.headline.granularity === 'hour' ? 'Time' : 'Day'
-  const costChartTitle = activeSnapshot.headline.granularity === 'hour' ? 'Allocated hourly cost' : 'Allocated daily cost'
+  const bucketLabel =
+    activeSnapshot.headline.granularity === 'hour' ? 'Hourly' : 'Daily'
+  const bucketColumnLabel =
+    activeSnapshot.headline.granularity === 'hour' ? 'Time' : 'Day'
+  const costChartTitle =
+    activeSnapshot.headline.granularity === 'hour'
+      ? 'Allocated hourly cost'
+      : 'Allocated daily cost'
   const showTrafficChartModeToggle =
-    activeSnapshot.headline.granularity === 'hour' && activeSnapshot.charts.requestsCostCache.length > 12
+    activeSnapshot.headline.granularity === 'hour' &&
+    activeSnapshot.charts.requestsCostCache.length > 12
   const trafficBarData = useMemo(
     () =>
       showTrafficChartModeToggle
-        ? aggregateTrafficChartPoints(activeSnapshot.charts.requestsCostCache, 12)
+        ? aggregateTrafficChartPoints(
+            activeSnapshot.charts.requestsCostCache,
+            12,
+          )
         : activeSnapshot.charts.requestsCostCache.map((item) => ({
             ...item,
             endDay: item.day,
@@ -82,7 +122,9 @@ function Home() {
             <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
               <div>
                 <h1 className="dashboard-title">Token usage</h1>
-                <p className="max-w-3xl text-sm text-slate-600">{activeSnapshot.headline.summary}</p>
+                <p className="max-w-3xl text-sm text-slate-600">
+                  {activeSnapshot.headline.summary}
+                </p>
               </div>
               <div className="dashboard-header-actions">
                 <Badge
@@ -94,7 +136,11 @@ function Home() {
                   <span aria-hidden className="dashboard-status-dot" />
                   {activeSnapshot.headline.sourceLabel}
                 </Badge>
-                <Button className="dashboard-feedback-button" onClick={() => window.location.reload()} variant="outline">
+                <Button
+                  className="dashboard-feedback-button"
+                  onClick={() => window.location.reload()}
+                  variant="outline"
+                >
                   <RefreshCcw className="size-4" />
                   Refresh view
                 </Button>
@@ -108,9 +154,15 @@ function Home() {
             value={activeTab}
           >
             <TabsList className="dashboard-tabs-list">
-              <TabsTrigger className="dashboard-tab-trigger" value="overview">Overview</TabsTrigger>
-              <TabsTrigger className="dashboard-tab-trigger" value="models">Models</TabsTrigger>
-              <TabsTrigger className="dashboard-tab-trigger" value="cost">Cost</TabsTrigger>
+              <TabsTrigger className="dashboard-tab-trigger" value="overview">
+                Overview
+              </TabsTrigger>
+              <TabsTrigger className="dashboard-tab-trigger" value="models">
+                Models
+              </TabsTrigger>
+              <TabsTrigger className="dashboard-tab-trigger" value="cost">
+                Cost
+              </TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
@@ -129,15 +181,21 @@ function Home() {
               onValueChange={(value) => {
                 const preset = value as TimeframePreset
                 setTimeframe((current) => ({
-                  endDay: current.endDay || projectSnapshot.filters.availableEndDay,
+                  endDay:
+                    current.endDay || projectSnapshot.filters.availableEndDay,
                   preset,
-                  startDay: current.startDay || projectSnapshot.filters.availableStartDay,
+                  startDay:
+                    current.startDay ||
+                    projectSnapshot.filters.availableStartDay,
                 }))
               }}
               value={timeframe.preset}
             >
               <SelectTrigger className="h-8 w-[148px] border-0 bg-transparent px-0 text-left text-sm font-medium text-slate-700 shadow-none focus:ring-0">
-                <SelectValue aria-label="Timeframe" placeholder="Select window" />
+                <SelectValue
+                  aria-label="Timeframe"
+                  placeholder="Select window"
+                />
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="24h">Last 24 hours</SelectItem>
@@ -153,37 +211,62 @@ function Home() {
               <Input
                 aria-label="Start date"
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
-                max={timeframe.endDay || projectSnapshot.filters.availableEndDay}
+                max={
+                  timeframe.endDay || projectSnapshot.filters.availableEndDay
+                }
                 min={projectSnapshot.filters.availableStartDay}
-                onChange={(event) => setTimeframe((current) => ({ ...current, startDay: event.target.value }))}
+                onChange={(event) =>
+                  setTimeframe((current) => ({
+                    ...current,
+                    startDay: event.target.value,
+                  }))
+                }
                 type="date"
-                value={timeframe.startDay || projectSnapshot.filters.availableStartDay}
+                value={
+                  timeframe.startDay ||
+                  projectSnapshot.filters.availableStartDay
+                }
               />
               <span className="text-slate-400">→</span>
               <Input
                 aria-label="End date"
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
                 max={projectSnapshot.filters.availableEndDay}
-                min={timeframe.startDay || projectSnapshot.filters.availableStartDay}
-                onChange={(event) => setTimeframe((current) => ({ ...current, endDay: event.target.value }))}
+                min={
+                  timeframe.startDay ||
+                  projectSnapshot.filters.availableStartDay
+                }
+                onChange={(event) =>
+                  setTimeframe((current) => ({
+                    ...current,
+                    endDay: event.target.value,
+                  }))
+                }
                 type="date"
-                value={timeframe.endDay || projectSnapshot.filters.availableEndDay}
+                value={
+                  timeframe.endDay || projectSnapshot.filters.availableEndDay
+                }
               />
             </div>
           ) : null}
         </div>
-
       </section>
 
       <section className="kpi-grid">
         {activeSnapshot.kpis.map((kpi) => (
           <Card key={kpi.label} className="kpi-card">
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-slate-500">{kpi.label}</CardTitle>
+              <CardTitle className="text-sm font-medium text-slate-500">
+                {kpi.label}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="text-3xl font-semibold tracking-tight text-slate-950">{kpi.value}</div>
-              <p className={`mt-2 text-sm ${toneClassNameMap[kpi.tone]}`}>{activeSnapshot.headline.sourceLabel}</p>
+              <div className="text-3xl font-semibold tracking-tight text-slate-950">
+                {kpi.value}
+              </div>
+              <p className={`mt-2 text-sm ${toneClassNameMap[kpi.tone]}`}>
+                {activeSnapshot.headline.sourceLabel}
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -195,14 +278,20 @@ function Home() {
             <ChartCard
               action={
                 showTrafficChartModeToggle ? (
-                  <div className="chart-mode-toggle" role="group" aria-label="Traffic chart display mode">
+                  <div
+                    className="chart-mode-toggle"
+                    role="group"
+                    aria-label="Traffic chart display mode"
+                  >
                     <Button
                       aria-pressed={trafficChartMode === 'bars'}
                       className="chart-mode-button"
                       onClick={() => setTrafficChartMode('bars')}
                       size="xs"
                       type="button"
-                      variant={trafficChartMode === 'bars' ? 'secondary' : 'ghost'}
+                      variant={
+                        trafficChartMode === 'bars' ? 'secondary' : 'ghost'
+                      }
                     >
                       12 bars
                     </Button>
@@ -212,7 +301,9 @@ function Home() {
                       onClick={() => setTrafficChartMode('line')}
                       size="xs"
                       type="button"
-                      variant={trafficChartMode === 'line' ? 'secondary' : 'ghost'}
+                      variant={
+                        trafficChartMode === 'line' ? 'secondary' : 'ghost'
+                      }
                     >
                       24h line
                     </Button>
@@ -227,7 +318,10 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart data={activeSnapshot.charts.requestsCostCache} title="Requests, cost, and cache trends" />
+                <TrafficTrendChart
+                  data={activeSnapshot.charts.requestsCostCache}
+                  title="Requests, cost, and cache trends"
+                />
               ) : (
                 <TrafficBars data={trafficBarData} />
               )}
@@ -240,7 +334,10 @@ function Home() {
               ]}
               title="Input vs output"
             >
-              <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
+              <LineChart
+                data={activeSnapshot.charts.inputOutput}
+                title="Input and output tokens"
+              />
             </ChartCard>
 
             <Card className="panel-card panel-card-signals">
@@ -252,14 +349,21 @@ function Home() {
               <CardContent className="p-0">
                 <div className="issue-list">
                   {activeSnapshot.issues.map((issue) => (
-                    <div className="issue-row" key={`${issue.severity}:${issue.title}`}>
+                    <div
+                      className="issue-row"
+                      key={`${issue.severity}:${issue.title}`}
+                    >
                       <div className="flex min-w-0 items-center gap-3">
                         <Badge className="issue-badge" variant="secondary">
                           {issue.severity}
                         </Badge>
-                        <span className="truncate text-sm text-indigo-700">{issue.title}</span>
+                        <span className="truncate text-sm text-indigo-700">
+                          {issue.title}
+                        </span>
                       </div>
-                      <span className="text-sm font-medium text-slate-600">{issue.count}</span>
+                      <span className="text-sm font-medium text-slate-600">
+                        {issue.count}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -277,62 +381,96 @@ function Home() {
           </section>
 
           <section className="space-y-6">
-            <ProjectBreakdownCard projects={activeSnapshot.projects.breakdown} />
+            <ProjectBreakdownCard
+              projects={activeSnapshot.projects.breakdown}
+            />
 
             <Card className="panel-card overflow-hidden daily-rollups-card">
               <CardHeader className="panel-header-row">
                 <div>
-                  <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
+                  <CardTitle className="panel-title">
+                    {bucketLabel} rollups
+                  </CardTitle>
                   <p className="mt-1 text-sm text-slate-500">
                     {activeSnapshot.headline.granularity === 'hour'
                       ? 'Hourly buckets expose the last 24 hours of request, token, cache, and allocated cost activity for faster troubleshooting.'
                       : 'Daily rollups cached in D1 for fast reads on Workers, regardless of whether the source is Hermes, OpenAI, or another provider.'}
                   </p>
                 </div>
-                <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
+                <Badge
+                  className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600"
+                  variant="secondary"
+                >
                   <Activity className="mr-1 size-3.5" />
-                  {formatRefreshBasisLabel(activeSnapshot.headline.generatedAt)} refresh basis
+                  {formatRefreshBasisLabel(
+                    activeSnapshot.headline.generatedAt,
+                  )}{' '}
+                  refresh basis
                 </Badge>
               </CardHeader>
               <CardContent className="p-0">
                 <Table className="daily-rollups-table">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
-                    <TableHead>{bucketColumnLabel}</TableHead>
-                    <TableHead className="text-right">Requests</TableHead>
-                    <TableHead className="text-right">Total Tokens</TableHead>
-                    <TableHead className="hidden lg:table-cell text-right">Input</TableHead>
-                    <TableHead className="hidden lg:table-cell text-right">Output</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {activeSnapshot.table.map((row) => (
-                    <TableRow key={row.traceId}>
-                      <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
-                      <TableCell>
-                        <div className="flex flex-col gap-1">
-                          <span>{formatBucketLabel(row.day)}</span>
-                          <span className="text-xs text-slate-500 sm:hidden">{row.traceId}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
-                      <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
-                      <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.inputTokens)}</TableCell>
-                      <TableCell className="hidden text-right lg:table-cell">{formatCompact(row.outputTokens)}</TableCell>
-                      <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
-                      <TableCell className="text-right">${row.cost.toFixed(2)}</TableCell>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="hidden sm:table-cell">
+                        Trace ID
+                      </TableHead>
+                      <TableHead>{bucketColumnLabel}</TableHead>
+                      <TableHead className="text-right">Requests</TableHead>
+                      <TableHead className="text-right">Total Tokens</TableHead>
+                      <TableHead className="hidden lg:table-cell text-right">
+                        Input
+                      </TableHead>
+                      <TableHead className="hidden lg:table-cell text-right">
+                        Output
+                      </TableHead>
+                      <TableHead className="hidden md:table-cell text-right">
+                        Cached %
+                      </TableHead>
+                      <TableHead className="text-right">Cost</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        </section>
-      </>
-    ) : null}
+                  </TableHeader>
+                  <TableBody>
+                    {activeSnapshot.table.map((row) => (
+                      <TableRow key={row.traceId}>
+                        <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
+                          {row.traceId}
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <span>{formatBucketLabel(row.day)}</span>
+                            <span className="text-xs text-slate-500 sm:hidden">
+                              {row.traceId}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {row.requests.toLocaleString('en-US')}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCompact(row.totalTokens)}
+                        </TableCell>
+                        <TableCell className="hidden text-right lg:table-cell">
+                          {formatCompact(row.inputTokens)}
+                        </TableCell>
+                        <TableCell className="hidden text-right lg:table-cell">
+                          {formatCompact(row.outputTokens)}
+                        </TableCell>
+                        <TableCell className="hidden text-right md:table-cell">
+                          {(row.cachedShare * 100).toFixed(1)}%
+                        </TableCell>
+                        <TableCell className="text-right">
+                          ${row.cost.toFixed(2)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          </section>
+        </>
+      ) : null}
 
       {activeTab === 'models' ? (
         <div className="space-y-6">
@@ -352,7 +490,10 @@ function Home() {
               }
               title="Model requests"
             >
-              <ModelBars data={activeSnapshot.charts.models} valueKey="requests" />
+              <ModelBars
+                data={activeSnapshot.charts.models}
+                valueKey="requests"
+              />
             </ChartCard>
 
             <ChartCard
@@ -396,14 +537,20 @@ function Home() {
             <ChartCard
               action={
                 showTrafficChartModeToggle ? (
-                  <div className="chart-mode-toggle" role="group" aria-label="Traffic chart display mode">
+                  <div
+                    className="chart-mode-toggle"
+                    role="group"
+                    aria-label="Traffic chart display mode"
+                  >
                     <Button
                       aria-pressed={trafficChartMode === 'bars'}
                       className="chart-mode-button"
                       onClick={() => setTrafficChartMode('bars')}
                       size="xs"
                       type="button"
-                      variant={trafficChartMode === 'bars' ? 'secondary' : 'ghost'}
+                      variant={
+                        trafficChartMode === 'bars' ? 'secondary' : 'ghost'
+                      }
                     >
                       12 bars
                     </Button>
@@ -413,7 +560,9 @@ function Home() {
                       onClick={() => setTrafficChartMode('line')}
                       size="xs"
                       type="button"
-                      variant={trafficChartMode === 'line' ? 'secondary' : 'ghost'}
+                      variant={
+                        trafficChartMode === 'line' ? 'secondary' : 'ghost'
+                      }
                     >
                       24h line
                     </Button>
@@ -428,7 +577,10 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart data={activeSnapshot.charts.requestsCostCache} title="Requests, cost, and cache trends" />
+                <TrafficTrendChart
+                  data={activeSnapshot.charts.requestsCostCache}
+                  title="Requests, cost, and cache trends"
+                />
               ) : (
                 <TrafficBars data={trafficBarData} />
               )}
@@ -441,7 +593,10 @@ function Home() {
               ]}
               title="Input vs output"
             >
-              <LineChart data={activeSnapshot.charts.inputOutput} title="Input and output tokens" />
+              <LineChart
+                data={activeSnapshot.charts.inputOutput}
+                title="Input and output tokens"
+              />
             </ChartCard>
 
             <ChartCard title={costChartTitle}>
@@ -454,9 +609,12 @@ function Home() {
           <Card className="panel-card overflow-hidden daily-rollups-card">
             <CardHeader className="panel-header-row">
               <div>
-                <CardTitle className="panel-title">{bucketLabel} rollups</CardTitle>
+                <CardTitle className="panel-title">
+                  {bucketLabel} rollups
+                </CardTitle>
                 <p className="mt-1 text-sm text-slate-500">
-                  Review the request, token, cache, and cost totals behind the current cost window.
+                  Review the request, token, cache, and cost totals behind the
+                  current cost window.
                 </p>
               </div>
             </CardHeader>
@@ -464,23 +622,37 @@ function Home() {
               <Table className="daily-rollups-table">
                 <TableHeader>
                   <TableRow>
-                    <TableHead className="hidden sm:table-cell">Trace ID</TableHead>
+                    <TableHead className="hidden sm:table-cell">
+                      Trace ID
+                    </TableHead>
                     <TableHead>{bucketColumnLabel}</TableHead>
                     <TableHead className="text-right">Requests</TableHead>
                     <TableHead className="text-right">Total Tokens</TableHead>
-                    <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
+                    <TableHead className="hidden md:table-cell text-right">
+                      Cached %
+                    </TableHead>
                     <TableHead className="text-right">Cost</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {activeSnapshot.table.map((row) => (
                     <TableRow key={`${row.traceId}:cost`}>
-                      <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">{row.traceId}</TableCell>
+                      <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
+                        {row.traceId}
+                      </TableCell>
                       <TableCell>{formatBucketLabel(row.day)}</TableCell>
-                      <TableCell className="text-right">{row.requests.toLocaleString('en-US')}</TableCell>
-                      <TableCell className="text-right">{formatCompact(row.totalTokens)}</TableCell>
-                      <TableCell className="hidden text-right md:table-cell">{(row.cachedShare * 100).toFixed(1)}%</TableCell>
-                      <TableCell className="text-right">{formatCurrency(row.cost)}</TableCell>
+                      <TableCell className="text-right">
+                        {row.requests.toLocaleString('en-US')}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatCompact(row.totalTokens)}
+                      </TableCell>
+                      <TableCell className="hidden text-right md:table-cell">
+                        {(row.cachedShare * 100).toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right">
+                        {formatCurrency(row.cost)}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -506,20 +678,25 @@ function ModelUsageBreakdownCard({ models }: ModelUsageBreakdownCardProps) {
         <div>
           <CardTitle className="panel-title">Model usage breakdown</CardTitle>
           <p className="mt-1 text-sm text-slate-500">
-            More than one model was active in this window, so this view breaks usage down by token share.
+            More than one model was active in this window, so this view breaks
+            usage down by token share.
           </p>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex h-3 overflow-hidden rounded-full bg-slate-100">
           {models.map((item) => {
-            const share = totalTokens > 0 ? (item.tokens / totalTokens) * 100 : 0
+            const share =
+              totalTokens > 0 ? (item.tokens / totalTokens) * 100 : 0
 
             return (
               <span
                 className="h-full"
                 key={`${item.provider}:${item.model}:share-bar`}
-                style={{ backgroundColor: item.color, width: `${Math.max(share, 3)}%` }}
+                style={{
+                  backgroundColor: item.color,
+                  width: `${Math.max(share, 3)}%`,
+                }}
               />
             )
           })}
@@ -527,24 +704,37 @@ function ModelUsageBreakdownCard({ models }: ModelUsageBreakdownCardProps) {
 
         <div className="legend-stats">
           {models.map((item) => {
-            const share = totalTokens > 0 ? (item.tokens / totalTokens) * 100 : 0
+            const share =
+              totalTokens > 0 ? (item.tokens / totalTokens) * 100 : 0
 
             return (
-              <div className="legend-stat-row" key={`${item.provider}:${item.model}:share-row`}>
+              <div
+                className="legend-stat-row"
+                key={`${item.provider}:${item.model}:share-row`}
+              >
                 <div className="flex min-w-0 flex-col gap-1">
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="legend-dot" style={{ backgroundColor: item.color }} />
-                    <span className="truncate font-medium text-slate-800">{formatModelLabel(item.model, item.provider)}</span>
+                    <span
+                      className="legend-dot"
+                      style={{ backgroundColor: item.color }}
+                    />
+                    <span className="truncate font-medium text-slate-800">
+                      {formatModelLabel(item.model, item.provider)}
+                    </span>
                   </div>
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span>{item.requests.toLocaleString('en-US')} requests</span>
+                    <span>
+                      {item.requests.toLocaleString('en-US')} requests
+                    </span>
                     <span>•</span>
                     <span>{formatCompact(item.tokens)} tokens</span>
                     <span>•</span>
                     <span>{formatCurrency(item.cost)}</span>
                   </div>
                 </div>
-                <span className="font-medium text-slate-700">{share.toFixed(1)}%</span>
+                <span className="font-medium text-slate-700">
+                  {share.toFixed(1)}%
+                </span>
               </div>
             )
           })}
@@ -561,23 +751,34 @@ function ProjectFilterChip({
 }: ProjectFilterChipProps) {
   const selectedSet = new Set(selectedProjectIds)
   const selectedLabel =
-    selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjects.length
+    selectedProjectIds.length === 0 ||
+    selectedProjectIds.length === availableProjects.length
       ? availableProjects.length === 1
         ? availableProjects[0]?.projectName || 'Agent'
         : 'All agents'
       : selectedProjectIds.length === 1
-        ? availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected agent'
+        ? availableProjects.find(
+            (project) => project.projectId === selectedProjectIds[0],
+          )?.projectName || 'Selected agent'
         : `${selectedProjectIds.length} selected agents`
 
   const toggleProject = (projectId: string) => {
     if (selectedProjectIds.length === 0) {
-      onChange(availableProjects.map((project) => project.projectId).filter((id) => id !== projectId))
+      onChange(
+        availableProjects
+          .map((project) => project.projectId)
+          .filter((id) => id !== projectId),
+      )
       return
     }
 
     if (selectedSet.has(projectId)) {
       const next = selectedProjectIds.filter((id) => id !== projectId)
-      onChange(next.length === 0 || next.length === availableProjects.length ? [] : next)
+      onChange(
+        next.length === 0 || next.length === availableProjects.length
+          ? []
+          : next,
+      )
       return
     }
 
@@ -591,22 +792,33 @@ function ProjectFilterChip({
         <Bot className="size-4" />
         {selectedLabel}
         <span className="text-[10px] uppercase tracking-[0.24em] text-slate-400">
-          {selectedProjectIds.length === 0 ? 'all' : `${selectedProjectIds.length}/${availableProjects.length}`}
+          {selectedProjectIds.length === 0
+            ? 'all'
+            : `${selectedProjectIds.length}/${availableProjects.length}`}
         </span>
       </summary>
       <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 min-w-[280px] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div>
             <p className="text-sm font-semibold text-slate-900">Agents</p>
-            <p className="text-xs text-slate-500">Select one or more agents to compare or roll up.</p>
+            <p className="text-xs text-slate-500">
+              Select one or more agents to compare or roll up.
+            </p>
           </div>
-          <Button onClick={() => onChange([])} size="sm" type="button" variant="ghost">
+          <Button
+            onClick={() => onChange([])}
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
             All
           </Button>
         </div>
         <div className="space-y-2">
           {availableProjects.map((project) => {
-            const checked = selectedProjectIds.length === 0 || selectedSet.has(project.projectId)
+            const checked =
+              selectedProjectIds.length === 0 ||
+              selectedSet.has(project.projectId)
 
             return (
               <label
@@ -614,7 +826,9 @@ function ProjectFilterChip({
                 key={project.projectId}
               >
                 <div className="min-w-0">
-                  <div className="font-medium text-slate-800">{project.projectName}</div>
+                  <div className="font-medium text-slate-800">
+                    {project.projectName}
+                  </div>
                   <div className="mt-1 text-xs text-slate-500">
                     {project.projectProvider} · {project.projectSlug}
                   </div>
@@ -645,7 +859,8 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
         <div>
           <CardTitle className="panel-title">Agent breakdown</CardTitle>
           <p className="mt-1 text-sm text-slate-500">
-            Compare combined usage against the individual agents contributing to this window.
+            Compare combined usage against the individual agents contributing to
+            this window.
           </p>
         </div>
       </CardHeader>
@@ -657,7 +872,9 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
               <TableHead className="hidden md:table-cell">Identifier</TableHead>
               <TableHead className="text-right">Requests</TableHead>
               <TableHead className="text-right">Tokens</TableHead>
-              <TableHead className="hidden md:table-cell text-right">Cached %</TableHead>
+              <TableHead className="hidden md:table-cell text-right">
+                Cached %
+              </TableHead>
               <TableHead className="text-right">Cost</TableHead>
             </TableRow>
           </TableHeader>
@@ -666,7 +883,9 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
               <TableRow key={project.projectId}>
                 <TableCell>
                   <div className="flex flex-col gap-1">
-                    <span className="font-medium text-slate-800">{project.projectName}</span>
+                    <span className="font-medium text-slate-800">
+                      {project.projectName}
+                    </span>
                     <span className="text-xs text-slate-500 md:hidden">
                       {project.projectProvider} · {project.projectSlug}
                     </span>
@@ -675,10 +894,18 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
                 <TableCell className="hidden md:table-cell text-slate-500">
                   {project.projectProvider} · {project.projectSlug}
                 </TableCell>
-                <TableCell className="text-right">{project.requests.toLocaleString('en-US')}</TableCell>
-                <TableCell className="text-right">{formatCompact(project.totalTokens)}</TableCell>
-                <TableCell className="hidden md:table-cell text-right">{(project.cachedShare * 100).toFixed(1)}%</TableCell>
-                <TableCell className="text-right">{formatCurrency(project.cost)}</TableCell>
+                <TableCell className="text-right">
+                  {project.requests.toLocaleString('en-US')}
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatCompact(project.totalTokens)}
+                </TableCell>
+                <TableCell className="hidden md:table-cell text-right">
+                  {(project.cachedShare * 100).toFixed(1)}%
+                </TableCell>
+                <TableCell className="text-right">
+                  {formatCurrency(project.cost)}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -688,7 +915,13 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
   )
 }
 
-function ChartCard({ action, children, footer, legend, title }: ChartCardProps) {
+function ChartCard({
+  action,
+  children,
+  footer,
+  legend,
+  title,
+}: ChartCardProps) {
   return (
     <Card className="panel-card">
       <CardHeader className="panel-header-row">
@@ -718,7 +951,10 @@ function LegendRow({ items }: LegendRowProps) {
     <div className="legend-row">
       {items.map((item) => (
         <span className="legend-item" key={item.label}>
-          <span className="legend-dot" style={{ backgroundColor: item.color }} />
+          <span
+            className="legend-dot"
+            style={{ backgroundColor: item.color }}
+          />
           {item.label}
         </span>
       ))}
@@ -732,7 +968,10 @@ function LegendStats({ items }: LegendStatsProps) {
       {items.map((item) => (
         <div className="legend-stat-row" key={item.key}>
           <div className="flex min-w-0 items-center gap-2">
-            <span className="legend-dot" style={{ backgroundColor: item.accent }} />
+            <span
+              className="legend-dot"
+              style={{ backgroundColor: item.accent }}
+            />
             <span className="truncate">{item.label}</span>
           </div>
           <span className="font-medium text-slate-700">{item.value}</span>
@@ -751,11 +990,24 @@ function TrafficBars({ data }: TrafficBarsProps) {
       {data.map((item) => (
         <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
-            <span className="bar bar-grey" style={{ height: `${(item.primary / maxRequests) * 100}%` }} />
-            <span className="bar bar-red" style={{ height: `${Math.max((item.secondary / maxCost) * 100, 8)}%` }} />
-            <span className="bar bar-violet" style={{ height: `${Math.max(item.tertiary, 8)}%` }} />
+            <span
+              className="bar bar-grey"
+              style={{ height: `${(item.primary / maxRequests) * 100}%` }}
+            />
+            <span
+              className="bar bar-red"
+              style={{
+                height: `${Math.max((item.secondary / maxCost) * 100, 8)}%`,
+              }}
+            />
+            <span
+              className="bar bar-violet"
+              style={{ height: `${Math.max(item.tertiary, 8)}%` }}
+            />
           </div>
-          <span className="chart-label">{formatTrafficBucketLabel(item.startDay, item.endDay)}</span>
+          <span className="chart-label">
+            {formatTrafficBucketLabel(item.startDay, item.endDay)}
+          </span>
         </div>
       ))}
     </div>
@@ -802,14 +1054,22 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   return (
     <div className="chart-block chart-block-bars chart-block-thick">
       {data.map((item) => (
-        <div className="bar-group" key={`${item.provider}:${item.model}:${valueKey}`}>
+        <div
+          className="bar-group"
+          key={`${item.provider}:${item.model}:${valueKey}`}
+        >
           <div className="bar-stack bar-stack-wide">
             <span
               className="bar"
-              style={{ backgroundColor: item.color, height: `${(item[valueKey] / maxValue) * 100}%` }}
+              style={{
+                backgroundColor: item.color,
+                height: `${(item[valueKey] / maxValue) * 100}%`,
+              }}
             />
           </div>
-          <span className="chart-label chart-label-wide">{formatModelLabel(item.model, item.provider)}</span>
+          <span className="chart-label chart-label-wide">
+            {formatModelLabel(item.model, item.provider)}
+          </span>
         </div>
       ))}
     </div>
@@ -817,7 +1077,10 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
 }
 
 function TokenBars({ data }: TokenBarsProps) {
-  const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
+  const maxTokens = Math.max(
+    ...data.map((item) => item.inputTokens + item.outputTokens),
+    1,
+  )
 
   return (
     <div className="chart-block chart-block-bars">
@@ -828,8 +1091,14 @@ function TokenBars({ data }: TokenBarsProps) {
         return (
           <div className="bar-group" key={item.day}>
             <div className="bar-stack">
-              <span className="bar bar-violet" style={{ height: `${inputHeight}%` }} />
-              <span className="bar bar-ink" style={{ height: `${outputHeight}%` }} />
+              <span
+                className="bar bar-violet"
+                style={{ height: `${inputHeight}%` }}
+              />
+              <span
+                className="bar bar-ink"
+                style={{ height: `${outputHeight}%` }}
+              />
             </div>
             <span className="chart-label">{formatDayShort(item.day)}</span>
           </div>
@@ -847,27 +1116,46 @@ function CostBars({ data }: CostBarsProps) {
       {data.map((item) => (
         <div className="bar-group" key={item.day}>
           <div className="bar-stack bar-stack-wide">
-            <span className="bar bar-magenta" style={{ height: `${(item.cost / maxCost) * 100}%` }} />
+            <span
+              className="bar bar-magenta"
+              style={{ height: `${(item.cost / maxCost) * 100}%` }}
+            />
           </div>
-          <span className="chart-label chart-label-wide">{formatDayShort(item.day)}</span>
+          <span className="chart-label chart-label-wide">
+            {formatDayShort(item.day)}
+          </span>
         </div>
       ))}
     </div>
   )
 }
 
-function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
+function getInitialTimeframeSelection(
+  snapshot: DashboardSnapshot,
+): TimeframeSelection {
   const dayCount = snapshot.filters.dailyRows.length
 
   if (dayCount <= 1) {
-    return { endDay: snapshot.filters.availableEndDay, preset: '24h', startDay: snapshot.filters.availableStartDay }
+    return {
+      endDay: snapshot.filters.availableEndDay,
+      preset: '24h',
+      startDay: snapshot.filters.availableStartDay,
+    }
   }
 
   if (dayCount <= 7) {
-    return { endDay: snapshot.filters.availableEndDay, preset: '7d', startDay: snapshot.filters.availableStartDay }
+    return {
+      endDay: snapshot.filters.availableEndDay,
+      preset: '7d',
+      startDay: snapshot.filters.availableStartDay,
+    }
   }
 
-  return { endDay: snapshot.filters.availableEndDay, preset: '30d', startDay: snapshot.filters.availableStartDay }
+  return {
+    endDay: snapshot.filters.availableEndDay,
+    preset: '30d',
+    startDay: snapshot.filters.availableStartDay,
+  }
 }
 
 function formatCompact(value: number) {
