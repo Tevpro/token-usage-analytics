@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
 import { ingestExternalRollupsToD1, loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
@@ -42,6 +42,10 @@ type ModelUsageStoredRow = {
   rollupId: string
   tokens: number
 }
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 class FakePreparedStatement {
   constructor(
@@ -496,6 +500,68 @@ describe('ingestExternalRollupsToD1', () => {
     )
     expect(filtered.charts.requestsCostCache.at(-1)).toEqual(
       expect.objectContaining({ day: '2026-05-23T12:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+    )
+  })
+
+  it('formats multi-project rollup summaries in Central time without D1 wording', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-06-10T15:12:00Z'))
+
+    const db = new FakeD1Database()
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+
+    await ingestExternalRollupsToD1(env, {
+      environment: 'production',
+      generatedAt: '2026-06-10T15:00:00Z',
+      rollups: [
+        {
+          cachedTokens: 40,
+          estimatedCostUsd: 0.9,
+          inputTokens: 320,
+          models: [],
+          outputTokens: 160,
+          requests: 5,
+          totalTokens: 520,
+          usageDate: '2026-06-10T15:00:00Z',
+        },
+      ],
+      sourceLabel: 'Hermes plugin sync',
+      workspace: {
+        name: 'Hermes Usage',
+        provider: 'Hermes',
+        slug: 'hermes-usage',
+      },
+    })
+
+    await ingestExternalRollupsToD1(env, {
+      environment: 'production',
+      generatedAt: '2026-06-10T15:00:00Z',
+      rollups: [
+        {
+          cachedTokens: 20,
+          estimatedCostUsd: 0.4,
+          inputTokens: 180,
+          models: [],
+          outputTokens: 90,
+          requests: 2,
+          totalTokens: 270,
+          usageDate: '2026-06-10T14:00:00Z',
+        },
+      ],
+      sourceLabel: 'Hermes plugin sync',
+      workspace: {
+        name: 'Second Project',
+        provider: 'Hermes',
+        slug: 'second-project',
+      },
+    })
+
+    const result = await loadDashboardSnapshotForRequest(env)
+    expect(result.snapshot.headline.summary).toBe(
+      '2 projects are contributing rollups. Last update 12m ago. Latest rollup date: Jun 10, 2026, 10:00 AM CDT.',
     )
   })
 })
