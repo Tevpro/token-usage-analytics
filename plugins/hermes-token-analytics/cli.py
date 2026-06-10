@@ -11,9 +11,10 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 _hermes_constants = None
 try:  # pragma: no cover - exercised in a real Hermes runtime
@@ -38,6 +39,8 @@ DEFAULT_WORKSPACE_NAME = "Hermes Usage"
 DEFAULT_WORKSPACE_SLUG = "hermes-usage"
 DEFAULT_SOURCE_LABEL = "Hermes token analytics plugin"
 DEFAULT_ENDPOINT_PATH = "/api/ingest/hermes-usage"
+HOUSTON_TIME_ZONE = ZoneInfo("America/Chicago")
+
 DEFAULT_USER_AGENT = "hermes-token-analytics/1.0"
 
 
@@ -270,16 +273,16 @@ def diagnose_config(config: TokenAnalyticsConfig, *, require_ingest: bool) -> Do
             db_readable = True
             with _connect_db(config) as conn:
                 session_count = _fetch_scalar(conn, "SELECT COUNT(*) FROM sessions")
+                cutoff = datetime.now(HOUSTON_TIME_ZONE).date() - timedelta(days=config.days_back - 1)
                 sessions_in_window = _fetch_scalar(
                     conn,
                     """
                     SELECT COUNT(*)
                     FROM sessions
                     WHERE started_at IS NOT NULL
-                      AND date(COALESCE(ended_at, started_at), 'unixepoch', 'localtime')
-                          >= date('now', 'localtime', ?)
+                      AND COALESCE(ended_at, started_at) >= ?
                     """,
-                    (f"-{config.days_back - 1} days",),
+                    (datetime.combine(cutoff, datetime.min.time(), tzinfo=HOUSTON_TIME_ZONE).astimezone(timezone.utc).timestamp(),),
                 )
                 oldest = conn.execute(
                     "SELECT MIN(COALESCE(ended_at, started_at)) FROM sessions WHERE started_at IS NOT NULL"
@@ -401,124 +404,113 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
     }
 
 
-def fetch_daily_rollups(connection: sqlite3.Connection, days_back: int) -> list[sqlite3.Row]:
+def fetch_daily_rollups(connection: sqlite3.Connection, days_back: int) -> list[dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back + 2)
+    rows = _fetch_session_metrics(connection, since=cutoff.timestamp())
+    cutoff_day = datetime.now(timezone.utc).date() - timedelta(days=days_back - 1)
+    return _aggregate_usage_rows(
+        rows,
+        key_fn=lambda session: _session_utc_day(session["session_ts"]),
+        include_model=False,
+        predicate=lambda session: _session_utc_day(session["session_ts"]) >= cutoff_day.isoformat(),
+    )
+
+
+def fetch_model_rollups(connection: sqlite3.Connection, days_back: int) -> list[dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days_back + 2)
+    rows = _fetch_session_metrics(connection, since=cutoff.timestamp())
+    cutoff_day = datetime.now(timezone.utc).date() - timedelta(days=days_back - 1)
+    return _aggregate_usage_rows(
+        rows,
+        key_fn=lambda session: _session_utc_day(session["session_ts"]),
+        include_model=True,
+        predicate=lambda session: _session_utc_day(session["session_ts"]) >= cutoff_day.isoformat(),
+    )
+
+
+def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    rows = _fetch_session_metrics(connection, since=cutoff.timestamp())
+    return _aggregate_usage_rows(
+        rows,
+        key_fn=lambda session: _session_utc_hour(session["session_ts"]),
+        include_model=False,
+    )
+
+
+def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[dict[str, Any]]:
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+    rows = _fetch_session_metrics(connection, since=cutoff.timestamp())
+    return _aggregate_usage_rows(
+        rows,
+        key_fn=lambda session: _session_utc_hour(session["session_ts"]),
+        include_model=True,
+    )
+
+
+def _fetch_session_metrics(connection: sqlite3.Connection, *, since: float | None = None) -> list[dict[str, Any]]:
     query = """
-        WITH scoped_sessions AS (
-            SELECT
-                date(COALESCE(ended_at, started_at), 'unixepoch', 'localtime') AS usage_date,
-                COALESCE(api_call_count, 0) AS api_calls,
-                COALESCE(input_tokens, 0) AS input_tokens,
-                COALESCE(output_tokens, 0) AS output_tokens,
-                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
-                COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
-            FROM sessions
-            WHERE started_at IS NOT NULL
-              AND date(COALESCE(ended_at, started_at), 'unixepoch', 'localtime') >= date('now', 'localtime', ?)
-        )
         SELECT
-            usage_date,
-            SUM(api_calls) AS api_calls,
-            SUM(input_tokens) AS input_tokens,
-            SUM(output_tokens) AS output_tokens,
-            SUM(cached_tokens) AS cached_tokens,
-            SUM(reasoning_tokens) AS reasoning_tokens,
-            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
-            SUM(cost_usd) AS cost_usd
-        FROM scoped_sessions
-        GROUP BY usage_date
-        ORDER BY usage_date ASC
+            COALESCE(ended_at, started_at) AS session_ts,
+            COALESCE(NULLIF(model, ''), 'unknown-model') AS model,
+            COALESCE(api_call_count, 0) AS api_calls,
+            COALESCE(input_tokens, 0) AS input_tokens,
+            COALESCE(output_tokens, 0) AS output_tokens,
+            COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
+            COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
+            COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
+        FROM sessions
+        WHERE started_at IS NOT NULL
     """
-    return list(connection.execute(query, (f"-{days_back - 1} days",)))
+    params: tuple[Any, ...] = ()
+    if since is not None:
+        query += " AND COALESCE(ended_at, started_at) >= ?"
+        params = (since,)
+    query += " ORDER BY session_ts ASC"
+    return [dict(row) for row in connection.execute(query, params)]
 
 
-def fetch_model_rollups(connection: sqlite3.Connection, days_back: int) -> list[sqlite3.Row]:
-    query = """
-        WITH scoped_sessions AS (
-            SELECT
-                date(COALESCE(ended_at, started_at), 'unixepoch', 'localtime') AS usage_date,
-                COALESCE(NULLIF(model, ''), 'unknown-model') AS model,
-                COALESCE(api_call_count, 0) AS api_calls,
-                COALESCE(input_tokens, 0) AS input_tokens,
-                COALESCE(output_tokens, 0) AS output_tokens,
-                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
-                COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
-            FROM sessions
-            WHERE started_at IS NOT NULL
-              AND date(COALESCE(ended_at, started_at), 'unixepoch', 'localtime') >= date('now', 'localtime', ?)
+def _aggregate_usage_rows(
+    rows: list[dict[str, Any]],
+    *,
+    key_fn,
+    include_model: bool,
+    predicate=None,
+) -> list[dict[str, Any]]:
+    aggregated: dict[tuple[str, ...], dict[str, Any]] = {}
+    for row in rows:
+        if predicate and not predicate(row):
+            continue
+        usage_date = key_fn(row)
+        key = (usage_date, str(row["model"])) if include_model else (usage_date,)
+        bucket = aggregated.setdefault(
+            key,
+            {
+                "usage_date": usage_date,
+                "model": str(row["model"]),
+                "api_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cached_tokens": 0,
+                "reasoning_tokens": 0,
+                "total_tokens": 0,
+                "cost_usd": 0.0,
+            },
         )
-        SELECT
-            usage_date,
-            model,
-            SUM(api_calls) AS api_calls,
-            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
-            SUM(cost_usd) AS cost_usd
-        FROM scoped_sessions
-        GROUP BY usage_date, model
-        ORDER BY usage_date ASC, total_tokens DESC, model ASC
-    """
-    return list(connection.execute(query, (f"-{days_back - 1} days",)))
+        bucket["api_calls"] += int(row["api_calls"] or 0)
+        bucket["input_tokens"] += int(row["input_tokens"] or 0)
+        bucket["output_tokens"] += int(row["output_tokens"] or 0)
+        bucket["cached_tokens"] += int(row["cached_tokens"] or 0)
+        bucket["reasoning_tokens"] += int(row["reasoning_tokens"] or 0)
+        bucket["total_tokens"] += int(row["input_tokens"] or 0) + int(row["output_tokens"] or 0) + int(row["cached_tokens"] or 0) + int(row["reasoning_tokens"] or 0)
+        bucket["cost_usd"] += float(row["cost_usd"] or 0)
 
-
-def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
-    query = """
-        WITH scoped_sessions AS (
-            SELECT
-                strftime('%Y-%m-%dT%H:00:00Z', COALESCE(ended_at, started_at), 'unixepoch') AS usage_date,
-                COALESCE(api_call_count, 0) AS api_calls,
-                COALESCE(input_tokens, 0) AS input_tokens,
-                COALESCE(output_tokens, 0) AS output_tokens,
-                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
-                COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
-            FROM sessions
-            WHERE started_at IS NOT NULL
-              AND COALESCE(ended_at, started_at) >= unixepoch('now', '-24 hours')
-        )
-        SELECT
-            usage_date,
-            SUM(api_calls) AS api_calls,
-            SUM(input_tokens) AS input_tokens,
-            SUM(output_tokens) AS output_tokens,
-            SUM(cached_tokens) AS cached_tokens,
-            SUM(reasoning_tokens) AS reasoning_tokens,
-            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
-            SUM(cost_usd) AS cost_usd
-        FROM scoped_sessions
-        GROUP BY usage_date
-        ORDER BY usage_date ASC
-    """
-    return list(connection.execute(query))
-
-
-def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
-    query = """
-        WITH scoped_sessions AS (
-            SELECT
-                strftime('%Y-%m-%dT%H:00:00Z', COALESCE(ended_at, started_at), 'unixepoch') AS usage_date,
-                COALESCE(NULLIF(model, ''), 'unknown-model') AS model,
-                COALESCE(api_call_count, 0) AS api_calls,
-                COALESCE(input_tokens, 0) AS input_tokens,
-                COALESCE(output_tokens, 0) AS output_tokens,
-                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
-                COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
-            FROM sessions
-            WHERE started_at IS NOT NULL
-              AND COALESCE(ended_at, started_at) >= unixepoch('now', '-24 hours')
-        )
-        SELECT
-            usage_date,
-            model,
-            SUM(api_calls) AS api_calls,
-            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
-            SUM(cost_usd) AS cost_usd
-        FROM scoped_sessions
-        GROUP BY usage_date, model
-        ORDER BY usage_date ASC, total_tokens DESC, model ASC
-    """
-    return list(connection.execute(query))
+    sort_key = (lambda item: (item["usage_date"], -item["total_tokens"], item["model"])) if include_model else (lambda item: item["usage_date"])
+    results = sorted(aggregated.values(), key=sort_key)
+    if not include_model:
+        for item in results:
+            item.pop("model", None)
+    return results
 
 
 def post_payload(config: TokenAnalyticsConfig, payload: dict[str, Any]) -> dict[str, Any]:
@@ -651,6 +643,18 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _session_utc_day(value: Any) -> str:
+    return _session_utc_datetime(value).strftime("%Y-%m-%d")
+
+
+def _session_utc_hour(value: Any) -> str:
+    return _session_utc_datetime(value).replace(minute=0, second=0, microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _session_utc_datetime(value: Any) -> datetime:
+    return datetime.fromtimestamp(float(value), tz=timezone.utc)
 
 
 def _iso_now() -> str:

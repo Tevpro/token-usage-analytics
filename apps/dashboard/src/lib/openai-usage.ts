@@ -1,3 +1,4 @@
+import { formatHoustonDay, formatHoustonTimestamp } from '#/lib/dashboard-timezone'
 import type { CloudflareAppEnv } from '#/lib/runtime'
 import type {
   DashboardIssueByDay,
@@ -874,7 +875,7 @@ function buildCombinedSourceLabel(selections: WorkspaceSelection[]) {
 }
 
 function buildStatusNote(provider: string, createdAt: number, latestDay: string) {
-  return `${provider} rollups last updated ${formatRelativeAge(createdAt)} and served from Cloudflare D1. Latest rollup date: ${latestDay}.`
+  return `${provider} rollups last updated ${formatRelativeAge(createdAt)} and are served from Cloudflare D1. Latest usage bucket: ${formatUsageBucket(latestDay)}.`
 }
 
 function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
@@ -889,7 +890,15 @@ function buildCombinedStatusNote(selections: WorkspaceSelection[]) {
 
   const freshestCreatedAt = Math.max(...selections.map((selection) => selection.latestCreatedAt || 0), 0)
   const latestDay = [...selections.map((selection) => selection.latestDay)].sort().at(-1) || 'n/a'
-  return `${selections.length} projects are contributing rollups from Cloudflare D1. Last refresh ${formatRelativeAge(freshestCreatedAt)}. Latest rollup date: ${latestDay}.`
+  return `${selections.length} projects are contributing rollups from Cloudflare D1. Last refresh ${formatRelativeAge(freshestCreatedAt)}. Latest usage bucket: ${formatUsageBucket(latestDay)}.`
+}
+
+function formatUsageBucket(value: string) {
+  if (!value || value === 'n/a') {
+    return 'n/a'
+  }
+
+  return value.includes('T') ? formatHoustonTimestamp(value) : formatHoustonDay(value)
 }
 
 function formatRelativeAge(timestamp: number) {
