@@ -55,6 +55,7 @@ export type DashboardModelDailyUsage = DashboardProjectOption & {
 
 type SnapshotBuildInput = {
   availableProjects?: DashboardProjectOption[]
+  bucketWindowEnd?: string
   dailyRows: DashboardDailyRow[]
   environment: string
   generatedAt: string
@@ -78,7 +79,11 @@ const MODEL_COLORS = ['#2563eb', '#7c3aed', '#0f766e', '#db2777', '#ea580c', '#0
 
 export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSnapshot {
   const granularity = input.granularity || 'day'
-  const aggregatedDailyRows = granularity === 'hour' ? fillMissingHourlyBuckets(summarizeRowsByBucket(input.dailyRows)) : summarizeRowsByBucket(input.dailyRows)
+  const summarizedRows = summarizeRowsByBucket(input.dailyRows)
+  const aggregatedDailyRows =
+    granularity === 'hour'
+      ? fillMissingHourlyBuckets(summarizedRows, input.bucketWindowEnd)
+      : fillMissingDailyBuckets(summarizedRows, input.bucketWindowEnd)
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
       accumulator.cachedTokens += row.cachedTokens
@@ -158,6 +163,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       availableEndDay,
       availableProjects,
       availableStartDay,
+      bucketWindowEnd: input.bucketWindowEnd,
       dailyRows: input.dailyRows,
       hourlyModelRowsByDay: input.hourlyModelRowsByDay,
       hourlyRows: input.hourlyRows,
@@ -282,6 +288,7 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       availableEndDay: fallbackDays.at(-1) || '',
       availableProjects,
       availableStartDay: fallbackDays[0] || '',
+      bucketWindowEnd: new Date().toISOString(),
       dailyRows: fallbackDays.map((day, index) => ({
         cachedTokens: Math.round((90000 + index * 8000) * (0.08 + index * 0.01)),
         cost: Number((1.8 + index * 0.35).toFixed(2)),
@@ -428,13 +435,13 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   return [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
 }
 
-function fillMissingHourlyBuckets(rows: DashboardDailyRow[]) {
+function fillMissingHourlyBuckets(rows: DashboardDailyRow[], bucketWindowEnd?: string) {
   if (rows.length === 0) {
     return rows
   }
 
   const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
-  const latestTimestamp = Date.parse(sortedRows.at(-1)?.day || '')
+  const latestTimestamp = resolveHourlyBucketTimestamp(inputOrLatestBucketWindowEnd(sortedRows, bucketWindowEnd))
   if (Number.isNaN(latestTimestamp)) {
     return sortedRows
   }
@@ -464,6 +471,85 @@ function fillMissingHourlyBuckets(rows: DashboardDailyRow[]) {
   }
 
   return filledRows
+}
+
+function fillMissingDailyBuckets(rows: DashboardDailyRow[], bucketWindowEnd?: string) {
+  if (rows.length === 0 || !bucketWindowEnd) {
+    return rows
+  }
+
+  const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
+  const firstDay = sortedRows[0]?.day.slice(0, 10) || ''
+  const endDay = resolveDailyBucketDay(bucketWindowEnd)
+  if (!firstDay || !endDay || endDay < firstDay) {
+    return sortedRows
+  }
+
+  const rowMap = new Map(sortedRows.map((row) => [row.day.slice(0, 10), row]))
+  const filledRows: DashboardDailyRow[] = []
+
+  for (let cursor = firstDay; cursor <= endDay; cursor = addUtcDays(cursor, 1)) {
+    const existing = rowMap.get(cursor)
+    if (existing) {
+      filledRows.push(existing)
+      continue
+    }
+
+    filledRows.push(buildEmptyBucket(cursor))
+  }
+
+  return filledRows
+}
+
+function inputOrLatestBucketWindowEnd(rows: DashboardDailyRow[], bucketWindowEnd?: string) {
+  return bucketWindowEnd || rows.at(-1)?.day || ''
+}
+
+function resolveDailyBucketDay(bucketWindowEnd: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bucketWindowEnd)) {
+    return bucketWindowEnd
+  }
+
+  const timestamp = Date.parse(bucketWindowEnd)
+  if (Number.isNaN(timestamp)) {
+    return ''
+  }
+
+  return new Date(timestamp).toISOString().slice(0, 10)
+}
+
+function resolveHourlyBucketTimestamp(bucketWindowEnd: string) {
+  if (/^\d{4}-\d{2}-\d{2}$/.test(bucketWindowEnd)) {
+    return Date.parse(`${bucketWindowEnd}T23:00:00Z`)
+  }
+
+  const timestamp = Date.parse(bucketWindowEnd)
+  if (Number.isNaN(timestamp)) {
+    return Number.NaN
+  }
+
+  const rounded = new Date(timestamp)
+  rounded.setUTCMinutes(0, 0, 0)
+  return rounded.getTime()
+}
+
+function buildEmptyBucket(day: string): DashboardDailyRow {
+  return {
+    ...EMPTY_PROJECT,
+    cachedTokens: 0,
+    cost: 0,
+    day,
+    inputTokens: 0,
+    outputTokens: 0,
+    requests: 0,
+    totalTokens: 0,
+  }
+}
+
+function addUtcDays(day: string, days: number) {
+  const next = new Date(`${day}T00:00:00Z`)
+  next.setUTCDate(next.getUTCDate() + days)
+  return next.toISOString().slice(0, 10)
 }
 
 function resolveAvailableProjects(availableProjects: DashboardProjectOption[] | undefined, dailyRows: DashboardDailyRow[]) {
@@ -638,6 +724,7 @@ export type DashboardSnapshot = {
     availableEndDay: string
     availableProjects: DashboardProjectOption[]
     availableStartDay: string
+    bucketWindowEnd?: string
     dailyRows: DashboardDailyRow[]
     hourlyModelRowsByDay?: DashboardModelDailyUsage[]
     hourlyRows?: DashboardDailyRow[]

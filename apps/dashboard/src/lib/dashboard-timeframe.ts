@@ -40,6 +40,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
 
     return buildSnapshotFromRollups({
       availableProjects: snapshot.filters.availableProjects,
+      bucketWindowEnd: resolveHourlyBucketWindowEnd(snapshot.filters.bucketWindowEnd, resolved.endDay),
       dailyRows: hourlyRows,
       environment: snapshot.headline.environment,
       generatedAt: snapshot.headline.generatedAt,
@@ -68,6 +69,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
 
   return buildSnapshotFromRollups({
     availableProjects: snapshot.filters.availableProjects,
+    bucketWindowEnd: resolved.endDay,
     dailyRows: filteredDailyRows,
     environment: snapshot.headline.environment,
     generatedAt: snapshot.headline.generatedAt,
@@ -192,6 +194,14 @@ function addDays(day: string, days: number) {
   const next = new Date(`${day}T00:00:00Z`)
   next.setUTCDate(next.getUTCDate() + days)
   return next.toISOString().slice(0, 10)
+}
+
+function resolveHourlyBucketWindowEnd(bucketWindowEnd: string | undefined, endDay: string) {
+  if (!bucketWindowEnd) {
+    return undefined
+  }
+
+  return bucketWindowEnd.slice(0, 10) === endDay ? bucketWindowEnd : `${endDay}T23:00:00Z`
 }
 
 function formatDay(value: string) {

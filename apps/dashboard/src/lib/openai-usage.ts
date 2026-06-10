@@ -452,6 +452,7 @@ async function loadSnapshotFromD1(
 
   return buildSnapshotFromRollups({
     availableProjects,
+    bucketWindowEnd: new Date().toISOString(),
     dailyRows: resolvedDailyRows,
     environment: rows[rows.length - 1].environment,
     generatedAt: new Date(latestCreatedAt).toISOString(),

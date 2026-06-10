@@ -1,8 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
 import { ingestExternalRollupsToD1, loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
 import type { CloudflareAppEnv } from '#/lib/runtime'
+
+afterEach(() => {
+  vi.useRealTimers()
+})
 
 type BoundStatement = {
   params: unknown[]
@@ -337,6 +341,9 @@ describe('ingestExternalRollupsToD1', () => {
   })
 
   it('preserves Hermes hourly rollups through D1 loading into the 24h dashboard view', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-22T22:45:00Z'))
+
     const db = new FakeD1Database()
     const env = {
       APP_ENV: 'production',
@@ -403,12 +410,16 @@ describe('ingestExternalRollupsToD1', () => {
     expect(filtered.headline.granularity).toBe('hour')
     expect(filtered.charts.requestsCostCache).toHaveLength(24)
     expect(filtered.charts.requestsCostCache[0]).toEqual(
-      expect.objectContaining({ day: '2026-05-21T22:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+      expect.objectContaining({ day: '2026-05-21T23:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
     )
-    expect(filtered.charts.requestsCostCache.slice(-2).map((item) => item.day)).toEqual([
+    expect(filtered.charts.requestsCostCache.slice(-3).map((item) => item.day)).toEqual([
       '2026-05-22T20:00:00Z',
       '2026-05-22T21:00:00Z',
+      '2026-05-22T22:00:00Z',
     ])
+    expect(filtered.charts.requestsCostCache.at(-1)).toEqual(
+      expect.objectContaining({ day: '2026-05-22T22:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+    )
     expect(filtered.charts.models).toEqual([
       expect.objectContaining({ model: 'gpt-5.4', provider: 'Hermes', requests: 5, tokens: 520 }),
       expect.objectContaining({ model: 'claude-sonnet-4', provider: 'Hermes', requests: 4, tokens: 410 }),

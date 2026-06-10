@@ -110,4 +110,36 @@ describe('token analytics cache calculations', () => {
     ])
     expect(snapshot.headline.workspace).toBe('All projects')
   })
+
+  it('fills missing daily buckets through the requested window end with zeros', () => {
+    const snapshot = buildSnapshotFromRollups({
+      bucketWindowEnd: '2026-05-26T12:00:00Z',
+      dailyRows: [
+        {
+          cachedTokens: 100,
+          cost: 1.5,
+          day: '2026-05-24',
+          inputTokens: 400,
+          outputTokens: 200,
+          projectId: 'workspace:atlas',
+          projectName: 'Atlas',
+          projectProvider: 'Hermes',
+          projectSlug: 'atlas',
+          requests: 6,
+          totalTokens: 600,
+        },
+      ],
+      environment: 'production',
+      generatedAt: '2026-05-24T13:02:00Z',
+      issues: [],
+      models: [{ cost: 1.5, model: 'gpt-5.4', provider: 'Hermes', requests: 6, tokens: 600 }],
+      sourceLabel: 'Live Hermes data',
+      workspaceName: 'Atlas',
+    })
+
+    expect(snapshot.filters.availableEndDay).toBe('2026-05-26')
+    expect(snapshot.table.map((row) => row.day)).toEqual(['2026-05-24', '2026-05-25', '2026-05-26'])
+    expect(snapshot.table[1]).toMatchObject({ cost: 0, day: '2026-05-25', requests: 0, totalTokens: 0 })
+    expect(snapshot.table[2]).toMatchObject({ cost: 0, day: '2026-05-26', requests: 0, totalTokens: 0 })
+  })
 })
