@@ -78,7 +78,10 @@ const MODEL_COLORS = ['#2563eb', '#7c3aed', '#0f766e', '#db2777', '#ea580c', '#0
 
 export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSnapshot {
   const granularity = input.granularity || 'day'
-  const aggregatedDailyRows = granularity === 'hour' ? fillMissingHourlyBuckets(summarizeRowsByBucket(input.dailyRows)) : summarizeRowsByBucket(input.dailyRows)
+  const aggregatedDailyRows =
+    granularity === 'hour'
+      ? fillMissingHourlyBuckets(summarizeRowsByBucket(input.dailyRows), input.generatedAt)
+      : summarizeRowsByBucket(input.dailyRows)
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
       accumulator.cachedTokens += row.cachedTokens
@@ -428,22 +431,28 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   return [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
 }
 
-function fillMissingHourlyBuckets(rows: DashboardDailyRow[]) {
+function fillMissingHourlyBuckets(rows: DashboardDailyRow[], generatedAt?: string) {
   if (rows.length === 0) {
     return rows
   }
 
   const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
-  const latestTimestamp = Date.parse(sortedRows.at(-1)?.day || '')
-  if (Number.isNaN(latestTimestamp)) {
+  const latestRowTimestamp = Date.parse(sortedRows.at(-1)?.day || '')
+  if (Number.isNaN(latestRowTimestamp)) {
     return sortedRows
   }
+
+  const generatedAtTimestamp = Date.parse(generatedAt || '')
+  const anchorTimestamp =
+    Number.isFinite(generatedAtTimestamp) && generatedAtTimestamp > latestRowTimestamp
+      ? truncateToHour(generatedAtTimestamp)
+      : latestRowTimestamp
 
   const rowMap = new Map(sortedRows.map((row) => [row.day, row]))
   const filledRows: DashboardDailyRow[] = []
 
   for (let offset = 23; offset >= 0; offset -= 1) {
-    const timestamp = latestTimestamp - offset * 60 * 60 * 1000
+    const timestamp = anchorTimestamp - offset * 60 * 60 * 1000
     const day = new Date(timestamp).toISOString().slice(0, 13) + ':00:00Z'
     const existing = rowMap.get(day)
     if (existing) {
@@ -464,6 +473,12 @@ function fillMissingHourlyBuckets(rows: DashboardDailyRow[]) {
   }
 
   return filledRows
+}
+
+function truncateToHour(timestampMs: number) {
+  const date = new Date(timestampMs)
+  date.setUTCMinutes(0, 0, 0)
+  return date.getTime()
 }
 
 function resolveAvailableProjects(availableProjects: DashboardProjectOption[] | undefined, dailyRows: DashboardDailyRow[]) {

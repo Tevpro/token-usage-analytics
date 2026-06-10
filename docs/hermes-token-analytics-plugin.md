@@ -61,6 +61,7 @@ Scheduling is **not** plugin config.
 
 - Put cadence, pause/resume state, and one-off triggering under `hermes cron ...`
 - Put endpoint, token, DB path, workspace labeling, and backfill depth under plugin env/config
+- When the sync runs on a 15-minute cadence, the plugin still emits a heartbeat via `generatedAt` even if there were no requests, and the dashboard treats that as liveness while filling any missing hourly chart buckets in the UI
 
 UI note: the dashboard may refer to these imported workspaces as **Agents** in user-facing filters and breakdowns. The plugin config keys remain workspace-based.
 

@@ -12,6 +12,7 @@ type BoundStatement = {
 type WorkspaceRow = {
   createdAt: number
   id: string
+  lastIngestedAt: number | null
   name: string
   provider: string
   slug: string
@@ -89,8 +90,8 @@ class FakeD1Database {
 
   apply(sql: string, params: unknown[]) {
     if (sql.includes('INSERT INTO workspaces')) {
-      const [id, slug, name, provider, createdAt] = params as [string, string, string, string, number]
-      this.workspaces.set(id, { createdAt, id, name, provider, slug })
+      const [id, slug, name, provider, createdAt, lastIngestedAt] = params as [string, string, string, string, number, number | null]
+      this.workspaces.set(id, { createdAt, id, lastIngestedAt, name, provider, slug })
       return
     }
 
@@ -137,25 +138,23 @@ class FakeD1Database {
   }
 
   selectAll(sql: string, params: unknown[]) {
-    if (sql.includes('MAX(daily_usage_rollups.created_at)')) {
+    if (sql.includes('COALESCE(workspaces.last_ingested_at')) {
       const [slug] = params as [string, string]
       return [...this.workspaces.values()]
         .map((workspace) => {
           const rollups = this.dailyRollups.filter((row) => row.projectId === workspace.id)
-          if (rollups.length === 0) {
-            return null
-          }
-          const latest = [...rollups].sort((left, right) => right.createdAt - left.createdAt)[0]
+          const latestRollup = [...rollups].sort((left, right) => right.createdAt - left.createdAt)[0]
+          const latestCreatedAt = workspace.lastIngestedAt ?? latestRollup?.createdAt ?? workspace.createdAt
+          const latestDay = latestRollup?.day ?? null
           return {
             id: workspace.id,
-            latestCreatedAt: latest.createdAt,
-            latestDay: latest.day,
+            latestCreatedAt,
+            latestDay,
             name: workspace.name,
             provider: workspace.provider,
             slug: workspace.slug,
           }
         })
-        .filter((row): row is NonNullable<typeof row> => Boolean(row))
         .sort((left, right) => {
           const leftPriority = slug && left.slug === slug ? 0 : 1
           const rightPriority = slug && right.slug === slug ? 0 : 1
@@ -305,6 +304,7 @@ describe('ingestExternalRollupsToD1', () => {
       'Hermes Usage',
       'Hermes',
       expect.any(Number),
+      Date.parse('2026-05-23T12:00:00Z'),
     ])
 
     expect(db.batches).toHaveLength(2)
@@ -403,11 +403,18 @@ describe('ingestExternalRollupsToD1', () => {
     expect(filtered.headline.granularity).toBe('hour')
     expect(filtered.charts.requestsCostCache).toHaveLength(24)
     expect(filtered.charts.requestsCostCache[0]).toEqual(
-      expect.objectContaining({ day: '2026-05-21T22:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+      expect.objectContaining({ day: '2026-05-22T13:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
     )
-    expect(filtered.charts.requestsCostCache.slice(-2).map((item) => item.day)).toEqual([
-      '2026-05-22T20:00:00Z',
-      '2026-05-22T21:00:00Z',
+    expect(filtered.charts.requestsCostCache.at(-1)).toEqual(
+      expect.objectContaining({ day: '2026-05-23T12:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+    )
+    expect(
+      filtered.charts.requestsCostCache
+        .filter((item) => item.primary > 0)
+        .map((item) => ({ day: item.day, primary: item.primary })),
+    ).toEqual([
+      { day: '2026-05-22T20:00:00Z', primary: 5 },
+      { day: '2026-05-22T21:00:00Z', primary: 4 },
     ])
     expect(filtered.charts.models).toEqual([
       expect.objectContaining({ model: 'gpt-5.4', provider: 'Hermes', requests: 5, tokens: 520 }),
@@ -415,15 +422,80 @@ describe('ingestExternalRollupsToD1', () => {
     ])
   })
 
-  it('rejects payloads without rollups', async () => {
+  it('accepts heartbeat-only payloads without rollups', async () => {
+    const db = new FakeD1Database()
     const env = {
-      DB: new FakeD1Database() as unknown as D1Database,
+      DB: db as unknown as D1Database,
     } satisfies CloudflareAppEnv
 
     await expect(
       ingestExternalRollupsToD1(env, {
+        generatedAt: '2026-05-23T12:00:00Z',
         rollups: [],
+        sourceLabel: 'Hermes heartbeat',
+        workspace: {
+          name: 'Hermes Usage',
+          provider: 'Hermes',
+          slug: 'hermes-usage',
+        },
       }),
-    ).rejects.toThrow('Ingest payload did not include any rollups.')
+    ).resolves.toEqual({
+      rowsWritten: 0,
+      sourceLabel: 'Hermes heartbeat',
+      syncedAt: '2026-05-23T12:00:00.000Z',
+    })
+
+    expect(db.runs).toHaveLength(1)
+    expect(db.runs[0]?.params).toEqual([
+      'workspace:hermes-usage',
+      'hermes-usage',
+      'Hermes Usage',
+      'Hermes',
+      expect.any(Number),
+      Date.parse('2026-05-23T12:00:00Z'),
+    ])
+    expect(db.batches).toHaveLength(0)
+  })
+
+  it('builds a live zero-usage dashboard snapshot from heartbeat-only payloads', async () => {
+    const db = new FakeD1Database()
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+
+    await ingestExternalRollupsToD1(env, {
+      generatedAt: '2026-05-23T12:00:00Z',
+      rollups: [],
+      sourceLabel: 'Hermes heartbeat',
+      workspace: {
+        name: 'Hermes Usage',
+        provider: 'Hermes',
+        slug: 'hermes-usage',
+      },
+    })
+
+    const result = await loadDashboardSnapshotForRequest(env)
+    const snapshot = result.snapshot
+    const filtered = filterSnapshotByTimeframe(snapshot, {
+      endDay: snapshot.filters.availableEndDay,
+      preset: '24h',
+      startDay: snapshot.filters.availableStartDay,
+    })
+
+    expect(snapshot.headline.generatedAt).toBe('2026-05-23T12:00:00.000Z')
+    expect(snapshot.headline.sourceLabel).toContain('Hermes data')
+    expect(snapshot.headline.summary).toContain('Latest rollup date: n/a.')
+    expect(snapshot.projects.available).toEqual([
+      expect.objectContaining({ projectName: 'Hermes Usage', projectSlug: 'hermes-usage' }),
+    ])
+    expect(filtered.headline.granularity).toBe('hour')
+    expect(filtered.charts.requestsCostCache).toHaveLength(24)
+    expect(filtered.charts.requestsCostCache[0]).toEqual(
+      expect.objectContaining({ day: '2026-05-22T13:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+    )
+    expect(filtered.charts.requestsCostCache.at(-1)).toEqual(
+      expect.objectContaining({ day: '2026-05-23T12:00:00Z', primary: 0, secondary: 0, tertiary: 0 }),
+    )
   })
 })

@@ -11,7 +11,7 @@ import sys
 import urllib.error
 import urllib.request
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -349,15 +349,16 @@ def render_config_snapshot(config: TokenAnalyticsConfig) -> dict[str, Any]:
 
 
 def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
+    hourly_now = _utc_now()
     with _connect_db(config) as connection:
         connection.row_factory = sqlite3.Row
         rollups = [
             *fetch_daily_rollups(connection, config.days_back),
-            *fetch_hourly_rollups(connection),
+            *fetch_hourly_rollups(connection, now=hourly_now),
         ]
         models = [
             *fetch_model_rollups(connection, config.days_back),
-            *fetch_hourly_model_rollups(connection),
+            *fetch_hourly_model_rollups(connection, now=hourly_now),
         ]
 
     models_by_day: dict[str, list[dict[str, Any]]] = {}
@@ -461,7 +462,18 @@ def fetch_model_rollups(connection: sqlite3.Connection, days_back: int) -> list[
     return list(connection.execute(query, (f"-{days_back - 1} days",)))
 
 
-def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+def fetch_hourly_rollups(
+    connection: sqlite3.Connection,
+    *,
+    hours: int = 24,
+    now: datetime | None = None,
+) -> list[dict[str, Any]]:
+    if hours <= 0:
+        return []
+
+    current_hour = _truncate_to_hour(now or _utc_now())
+    window_start = current_hour - timedelta(hours=hours - 1)
+    window_end = current_hour + timedelta(hours=1)
     query = """
         WITH scoped_sessions AS (
             SELECT
@@ -474,7 +486,8 @@ def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
                 COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
             FROM sessions
             WHERE started_at IS NOT NULL
-              AND COALESCE(ended_at, started_at) >= unixepoch('now', '-24 hours')
+              AND COALESCE(ended_at, started_at) >= ?
+              AND COALESCE(ended_at, started_at) < ?
         )
         SELECT
             usage_date,
@@ -489,10 +502,24 @@ def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
         GROUP BY usage_date
         ORDER BY usage_date ASC
     """
-    return list(connection.execute(query))
+    return [
+        _normalize_rollup_row(row)
+        for row in connection.execute(query, (int(window_start.timestamp()), int(window_end.timestamp())))
+    ]
 
 
-def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[sqlite3.Row]:
+def fetch_hourly_model_rollups(
+    connection: sqlite3.Connection,
+    *,
+    hours: int = 24,
+    now: datetime | None = None,
+) -> list[sqlite3.Row]:
+    if hours <= 0:
+        return []
+
+    current_hour = _truncate_to_hour(now or _utc_now())
+    window_start = current_hour - timedelta(hours=hours - 1)
+    window_end = current_hour + timedelta(hours=1)
     query = """
         WITH scoped_sessions AS (
             SELECT
@@ -506,7 +533,8 @@ def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[sqlite3.R
                 COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
             FROM sessions
             WHERE started_at IS NOT NULL
-              AND COALESCE(ended_at, started_at) >= unixepoch('now', '-24 hours')
+              AND COALESCE(ended_at, started_at) >= ?
+              AND COALESCE(ended_at, started_at) < ?
         )
         SELECT
             usage_date,
@@ -518,7 +546,20 @@ def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[sqlite3.R
         GROUP BY usage_date, model
         ORDER BY usage_date ASC, total_tokens DESC, model ASC
     """
-    return list(connection.execute(query))
+    return list(connection.execute(query, (int(window_start.timestamp()), int(window_end.timestamp()))))
+
+
+def _normalize_rollup_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    return {
+        "usage_date": str(row["usage_date"]),
+        "api_calls": int(row["api_calls"] or 0),
+        "input_tokens": int(row["input_tokens"] or 0),
+        "output_tokens": int(row["output_tokens"] or 0),
+        "cached_tokens": int(row["cached_tokens"] or 0),
+        "reasoning_tokens": int(row["reasoning_tokens"] or 0),
+        "total_tokens": int(row["total_tokens"] or 0),
+        "cost_usd": float(row["cost_usd"] or 0),
+    }
 
 
 def post_payload(config: TokenAnalyticsConfig, payload: dict[str, Any]) -> dict[str, Any]:
@@ -654,7 +695,15 @@ def _env_float(name: str, default: float) -> float:
 
 
 def _iso_now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    return _utc_now().replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _truncate_to_hour(value: datetime) -> datetime:
+    return value.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
 
 def _ts_to_iso(value: Any) -> str | None:
