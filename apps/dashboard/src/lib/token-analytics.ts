@@ -1,3 +1,4 @@
+import { formatHoustonDay } from '#/lib/dashboard-timezone'
 export type DashboardProjectOption = {
   projectId: string
   projectName: string
@@ -536,12 +537,7 @@ export function calculateCachedShare(
 }
 
 function formatDay(value: string) {
-  return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-    year: 'numeric',
-  }).format(new Date(`${value}T00:00:00Z`))
+  return formatHoustonDay(value)
 }
 
 export type DashboardSnapshot = {

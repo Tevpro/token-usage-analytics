@@ -21,6 +21,7 @@ import {
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
 import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
+import { formatHoustonDay, formatHoustonDayShort, formatHoustonTimestamp } from '#/lib/dashboard-timezone'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
 import type { TimeframePreset, TimeframeSelection } from '#/lib/dashboard-timeframe'
@@ -236,7 +237,7 @@ function Home() {
                 </div>
                 <Badge className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600" variant="secondary">
                   <Activity className="mr-1 size-3.5" />
-                  {activeSnapshot.headline.generatedAt.slice(0, 16).replace('T', ' ')} refresh basis
+                  {formatHoustonTimestamp(activeSnapshot.headline.generatedAt)} refresh basis
                 </Badge>
               </CardHeader>
               <CardContent className="p-0">
@@ -779,20 +780,11 @@ function formatModelLabel(model: string, provider: string) {
 }
 
 function formatDay(value: string) {
-  return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-    year: 'numeric',
-  }).format(new Date(`${value}T00:00:00Z`))
+  return formatHoustonDay(value)
 }
 
 function formatDayShort(value: string) {
-  return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-  }).format(new Date(`${value}T00:00:00Z`))
+  return formatHoustonDayShort(value)
 }
 
 function toPolylinePoints(values: number[]) {
