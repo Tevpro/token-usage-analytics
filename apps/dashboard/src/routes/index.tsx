@@ -156,12 +156,11 @@ function Home() {
         : activeSnapshot.charts.costByDay,
     [activeSnapshot.charts.costByDay, isNarrowViewport, mobileBucketCount],
   )
-  const rotateDailyTickLabels =
-    activeSnapshot.headline.granularity === 'day' &&
+  const rotateDenseTickLabels =
     Math.max(trafficBarData.length, compactTokenVolumeData.length, compactCostByDayData.length) > defaultBarMaxLabels
-  const trafficMaxLabels = rotateDailyTickLabels ? trafficBarData.length : defaultBarMaxLabels
-  const tokenMaxLabels = rotateDailyTickLabels ? compactTokenVolumeData.length : defaultBarMaxLabels
-  const costMaxLabels = rotateDailyTickLabels ? compactCostByDayData.length : defaultBarMaxLabels
+  const trafficMaxLabels = rotateDenseTickLabels ? trafficBarData.length : defaultBarMaxLabels
+  const tokenMaxLabels = rotateDenseTickLabels ? compactTokenVolumeData.length : defaultBarMaxLabels
+  const costMaxLabels = rotateDenseTickLabels ? compactCostByDayData.length : defaultBarMaxLabels
   const trafficSummaryItems = useMemo(
     () => [
       {
@@ -431,7 +430,7 @@ function Home() {
                   compactLabels={isNarrowViewport}
                   data={trafficBarData}
                   maxLabels={trafficMaxLabels}
-                  rotateLabels={rotateDailyTickLabels}
+                  rotateLabels={rotateDenseTickLabels}
                 />
               )}
             </ChartCard>
@@ -620,7 +619,7 @@ function Home() {
                 compactLabels={isNarrowViewport}
                 data={compactTokenVolumeData}
                 maxLabels={tokenMaxLabels}
-                rotateLabels={rotateDailyTickLabels}
+                rotateLabels={rotateDenseTickLabels}
               />
             </ChartCard>
 
@@ -641,7 +640,7 @@ function Home() {
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
                 maxLabels={costMaxLabels}
-                rotateLabels={rotateDailyTickLabels}
+                rotateLabels={rotateDenseTickLabels}
               />
             </ChartCard>
           </section>
@@ -701,7 +700,7 @@ function Home() {
                   compactLabels={isNarrowViewport}
                   data={trafficBarData}
                   maxLabels={trafficMaxLabels}
-                  rotateLabels={rotateDailyTickLabels}
+                  rotateLabels={rotateDenseTickLabels}
                 />
               )}
             </ChartCard>
@@ -722,7 +721,7 @@ function Home() {
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
                 maxLabels={costMaxLabels}
-                rotateLabels={rotateDailyTickLabels}
+                rotateLabels={rotateDenseTickLabels}
               />
             </ChartCard>
           </section>
