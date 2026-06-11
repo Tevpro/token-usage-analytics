@@ -1512,13 +1512,13 @@ function formatTrafficBucketLabel(startDay: string, endDay: string, compact = fa
     return `${formatter.format(start)}-${formatter.format(end)}`
   }
 
-  const formatter = new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
-    minute: compact ? undefined : '2-digit',
     timeZone: DASHBOARD_TIME_ZONE,
   })
-
-  return `${formatter.format(start)}-${formatter.format(end)}`
+    .format(start)
+    .replace(/\s/g, '')
+    .toLowerCase()
 }
 
 function formatRefreshBasisLabel(value: string) {
