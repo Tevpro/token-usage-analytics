@@ -31,6 +31,34 @@ const PRESET_DAY_COUNTS: Record<Exclude<TimeframePreset, 'custom'>, number> = {
 
 export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection: TimeframeSelection): DashboardSnapshot {
   const resolved = resolveTimeframeSelection(snapshot, selection)
+
+  if (selection.preset === '24h' && snapshot.filters.hourlyRows && snapshot.filters.hourlyRows.length > 0) {
+    const hourlyRows = [...snapshot.filters.hourlyRows].sort((left, right) => left.day.localeCompare(right.day))
+    const hourlyModelRowsByDay = snapshot.filters.hourlyModelRowsByDay?.length
+      ? snapshot.filters.hourlyModelRowsByDay
+      : snapshot.filters.modelRowsByDay.filter((row) => row.day.includes('T'))
+    const activeModelRows = hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : snapshot.filters.modelRowsByDay
+
+    return buildSnapshotFromRollups({
+      availableProjects: snapshot.filters.availableProjects,
+      dailyRows: hourlyRows,
+      environment: snapshot.headline.environment,
+      generatedAt: snapshot.headline.generatedAt,
+      granularity: 'hour',
+      hourlyModelRowsByDay: hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : undefined,
+      hourlyRows,
+      issues: [],
+      issuesByDay: [],
+      models: summarizeModels(activeModelRows),
+      modelRowsByDay: activeModelRows,
+      rangeLabel: resolved.rangeLabel,
+      selectedProjectIds: snapshot.filters.selectedProjectIds,
+      sourceLabel: snapshot.headline.sourceLabel,
+      statusNote: snapshot.headline.summary,
+      workspaceName: snapshot.headline.workspace,
+    })
+  }
+
   const filteredDailyRows = snapshot.filters.dailyRows.filter((row) => row.day >= resolved.startDay && row.day <= resolved.endDay)
   const filteredIssueRows = snapshot.filters.issuesByDay.filter(
     (issue) => issue.day >= resolved.startDay && issue.day <= resolved.endDay,
@@ -44,6 +72,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
     dailyRows: filteredDailyRows,
     environment: snapshot.headline.environment,
     generatedAt: snapshot.headline.generatedAt,
+    granularity: 'day',
     issues: summarizeIssues(filteredIssueRows),
     issuesByDay: filteredIssueRows,
     models: summarizeModels(filteredModelRows),

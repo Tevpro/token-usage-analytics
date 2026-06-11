@@ -60,6 +60,8 @@ It:
 1. installs dashboard dependencies in `apps/dashboard/`
 2. builds the app
 3. deploys a PR-specific Cloudflare Worker preview
+4. writes the preview URL into the GitHub Actions job summary
+5. posts or updates a PR comment with the current preview URL
 
 ## Production deploy behavior
 
@@ -95,18 +97,23 @@ If the token is missing, invalid, or underscoped, preview and production deploys
 ## Common failure modes
 
 ### Preview or deploy ran on the wrong changes
+
 Check the workflow path filters first.
 
 ### `CLOUDFLARE_API_TOKEN` missing or invalid
+
 Wrangler will fail during migration apply or deploy.
 
 ### `CLOUDFLARE_ACCOUNT_ID` missing
+
 Wrangler may fail to resolve the target account.
 
 ### Wrong `database_id` in `apps/dashboard/wrangler.jsonc`
+
 Remote D1 migration apply will fail or target the wrong database.
 
 ### Token lacks D1 or Workers permissions
+
 Deploy may partially fail or fail at the migration step.
 
 ## Important GitHub auth pitfall
