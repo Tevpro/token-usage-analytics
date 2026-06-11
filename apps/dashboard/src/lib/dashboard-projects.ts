@@ -30,6 +30,8 @@ export function filterSnapshotByProjects(snapshot: DashboardSnapshot, selectedPr
 
   return buildSnapshotFromRollups({
     availableProjects: snapshot.projects.available,
+    bucketWindowEnd: snapshot.filters.availableEndDay,
+    bucketWindowStart: snapshot.filters.availableStartDay,
     dailyRows,
     environment: snapshot.headline.environment,
     generatedAt: snapshot.headline.generatedAt,

@@ -1,5 +1,6 @@
 export type TrafficChartPoint = {
   day: string
+  missing?: boolean
   primary: number
   secondary: number
   tertiary: number
@@ -12,12 +13,14 @@ export type AggregatedTrafficChartPoint = TrafficChartPoint & {
 
 export type DualMetricChartPoint = {
   day: string
+  missing?: boolean
   primary: number
   secondary: number
 }
 
 export type SingleMetricChartPoint = {
   day: string
+  missing?: boolean
   value: number
 }
 
@@ -41,10 +44,12 @@ export function aggregateTrafficChartPoints(data: TrafficChartPoint[], targetBuc
       totalRequests > 0
         ? chunk.reduce((sum, item) => sum + item.primary * item.tertiary, 0) / totalRequests
         : chunk.reduce((sum, item) => sum + item.tertiary, 0) / chunk.length
+    const hasData = chunk.some((item) => !item.missing)
 
     aggregated.push({
       day: chunk[chunk.length - 1].day,
       endDay: chunk[chunk.length - 1].day,
+      missing: !hasData,
       primary: chunk.reduce((sum, item) => sum + item.primary, 0),
       secondary: chunk.reduce((sum, item) => sum + item.secondary, 0),
       startDay: chunk[0].day,
@@ -70,8 +75,11 @@ export function aggregateDualMetricChartPoints(data: DualMetricChartPoint[], tar
       continue
     }
 
+    const hasData = chunk.some((item) => !item.missing)
+
     aggregated.push({
       day: chunk[chunk.length - 1].day,
+      missing: !hasData,
       primary: chunk.reduce((sum, item) => sum + item.primary, 0),
       secondary: chunk.reduce((sum, item) => sum + item.secondary, 0),
     })
@@ -95,8 +103,11 @@ export function aggregateSingleMetricChartPoints(data: SingleMetricChartPoint[],
       continue
     }
 
+    const hasData = chunk.some((item) => !item.missing)
+
     aggregated.push({
       day: chunk[chunk.length - 1].day,
+      missing: !hasData,
       value: chunk.reduce((sum, item) => sum + item.value, 0),
     })
   }

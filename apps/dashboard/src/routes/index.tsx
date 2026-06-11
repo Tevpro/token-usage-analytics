@@ -1130,9 +1130,9 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBars
 }
 
 function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
-  const requestPoints = toPolylinePoints(data.map((item) => item.primary))
-  const costPoints = toPolylinePoints(data.map((item) => item.secondary))
-  const cachePoints = toPolylinePoints(data.map((item) => item.tertiary))
+  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
+  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
+  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })))
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1140,16 +1140,22 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
       <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
       <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
       <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
-      <polyline className="chart-line chart-line-grey" points={requestPoints} />
-      <polyline className="chart-line chart-line-red" points={costPoints} />
-      <polyline className="chart-line chart-line-muted" points={cachePoints} />
+      {requestSegments.map((points, index) => (
+        <polyline className="chart-line chart-line-grey" key={`requests-${index}`} points={points} />
+      ))}
+      {costSegments.map((points, index) => (
+        <polyline className="chart-line chart-line-red" key={`cost-${index}`} points={points} />
+      ))}
+      {cacheSegments.map((points, index) => (
+        <polyline className="chart-line chart-line-muted" key={`cache-${index}`} points={points} />
+      ))}
     </svg>
   )
 }
 
 function LineChart({ data, title }: LineChartProps) {
-  const primary = toPolylinePoints(data.map((item) => item.primary))
-  const secondary = toPolylinePoints(data.map((item) => item.secondary))
+  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
+  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1157,8 +1163,12 @@ function LineChart({ data, title }: LineChartProps) {
       <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
       <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
       <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
-      <polyline className="chart-line chart-line-muted" points={primary} />
-      <polyline className="chart-line" points={secondary} />
+      {primarySegments.map((points, index) => (
+        <polyline className="chart-line chart-line-muted" key={`primary-${index}`} points={points} />
+      ))}
+      {secondarySegments.map((points, index) => (
+        <polyline className="chart-line" key={`secondary-${index}`} points={points} />
+      ))}
     </svg>
   )
 }
@@ -1478,16 +1488,31 @@ function formatRefreshBasisLabel(value: string) {
   }).format(new Date(value))
 }
 
-function toPolylinePoints(values: number[]) {
-  const maxValue = Math.max(...values, 1)
+function toPolylineSegments(points: Array<{ missing?: boolean; value: number }>) {
+  const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
+  const maxValue = Math.max(...presentValues, 1)
+  const segments: string[] = []
+  let currentSegment: string[] = []
 
-  return values
-    .map((value, index) => {
-      const x = 16 + index * (288 / Math.max(values.length - 1, 1))
-      const y = 130 - (value / maxValue) * 112
-      return `${x},${y}`
-    })
-    .join(' ')
+  points.forEach((point, index) => {
+    if (point.missing) {
+      if (currentSegment.length >= 2) {
+        segments.push(currentSegment.join(' '))
+      }
+      currentSegment = []
+      return
+    }
+
+    const x = 16 + index * (288 / Math.max(points.length - 1, 1))
+    const y = 130 - (point.value / maxValue) * 112
+    currentSegment.push(`${x},${y}`)
+  })
+
+  if (currentSegment.length >= 2) {
+    segments.push(currentSegment.join(' '))
+  }
+
+  return segments
 }
 
 const toneClassNameMap = {
@@ -1561,6 +1586,7 @@ type TrafficBarsProps = {
 type TrafficTrendChartProps = {
   data: Array<{
     day: string
+    missing?: boolean
     primary: number
     secondary: number
     tertiary: number
@@ -1573,6 +1599,7 @@ type TrafficChartMode = 'bars' | 'line'
 type LineChartProps = {
   data: Array<{
     day: string
+    missing?: boolean
     primary: number
     secondary: number
   }>
@@ -1596,6 +1623,7 @@ type TokenBarsProps = {
   data: Array<{
     day: string
     inputTokens: number
+    missing?: boolean
     outputTokens: number
   }>
   maxLabels?: number
@@ -1606,6 +1634,7 @@ type CostBarsProps = {
   data: Array<{
     cost: number
     day: string
+    missing?: boolean
   }>
   maxLabels?: number
 }

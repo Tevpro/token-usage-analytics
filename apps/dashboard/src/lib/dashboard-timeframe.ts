@@ -68,6 +68,8 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
 
   return buildSnapshotFromRollups({
     availableProjects: snapshot.filters.availableProjects,
+    bucketWindowEnd: resolved.endDay,
+    bucketWindowStart: resolved.startDay,
     dailyRows: filteredDailyRows,
     environment: snapshot.headline.environment,
     generatedAt: snapshot.headline.generatedAt,

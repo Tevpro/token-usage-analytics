@@ -75,6 +75,41 @@ describe('dashboard timeframe filtering', () => {
     expect(filtered.table.map((row) => row.day)).toEqual(['2026-05-01', '2026-05-02', '2026-05-03'])
   })
 
+  it('fills missing days inside a filtered window so charts keep blank slots', () => {
+    const sparseSnapshot = buildSnapshotFromRollups({
+      dailyRows: [
+        { cachedTokens: 120, cost: 1.25, day: '2026-05-01', inputTokens: 1000, outputTokens: 400, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', requests: 10, totalTokens: 1400 },
+        { cachedTokens: 360, cost: 3.75, day: '2026-05-03', inputTokens: 3000, outputTokens: 1200, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', requests: 30, totalTokens: 4200 },
+      ],
+      environment: 'production',
+      generatedAt: '2026-05-03T12:00:00Z',
+      issues: [],
+      modelRowsByDay: [
+        { cost: 1.5, day: '2026-05-01', model: 'gpt-5.4', projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', provider: 'Hermes', requests: 10, tokens: 1400 },
+        { cost: 1.5, day: '2026-05-03', model: 'gpt-5.4', projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', provider: 'Hermes', requests: 20, tokens: 2600 },
+      ],
+      models: [
+        { cost: 3, model: 'gpt-5.4', provider: 'Hermes', requests: 30, tokens: 4000 },
+      ],
+      sourceLabel: 'Hermes plugin sync',
+      workspaceName: 'Hermes Usage',
+    })
+
+    const filtered = filterSnapshotByTimeframe(sparseSnapshot, {
+      endDay: '2026-05-03',
+      preset: 'custom',
+      startDay: '2026-05-01',
+    })
+
+    expect(filtered.table.map((row) => row.day)).toEqual(['2026-05-01', '2026-05-02', '2026-05-03'])
+    expect(filtered.table[1]).toEqual(
+      expect.objectContaining({ cost: 0, day: '2026-05-02', hasData: false, requests: 0, totalTokens: 0 }),
+    )
+    expect(filtered.charts.inputOutput[1]).toEqual(
+      expect.objectContaining({ day: '2026-05-02', missing: true, primary: 0, secondary: 0 }),
+    )
+  })
+
   it('keeps same-named models from different providers separate after filtering', () => {
     const providerSplitSnapshot = buildSnapshotFromRollups({
       dailyRows: [

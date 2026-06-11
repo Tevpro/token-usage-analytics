@@ -33,6 +33,7 @@ describe('aggregateTrafficChartPoints', () => {
     expect(aggregated[0]).toEqual({
       day: '2026-05-28T01:00:00Z',
       endDay: '2026-05-28T01:00:00Z',
+      missing: false,
       primary: 3,
       secondary: 6,
       startDay: '2026-05-28T00:00:00Z',
@@ -41,6 +42,7 @@ describe('aggregateTrafficChartPoints', () => {
     expect(aggregated[11]).toEqual({
       day: '2026-05-28T23:00:00Z',
       endDay: '2026-05-28T23:00:00Z',
+      missing: false,
       primary: 47,
       secondary: 94,
       startDay: '2026-05-28T22:00:00Z',
@@ -60,8 +62,22 @@ describe('aggregateDualMetricChartPoints', () => {
     const aggregated = aggregateDualMetricChartPoints(input)
 
     expect(aggregated).toHaveLength(8)
-    expect(aggregated[0]).toEqual({ day: '2026-05-03', primary: 6, secondary: 60 })
-    expect(aggregated[7]).toEqual({ day: '2026-05-24', primary: 69, secondary: 690 })
+    expect(aggregated[0]).toEqual({ day: '2026-05-03', missing: false, primary: 6, secondary: 60 })
+    expect(aggregated[7]).toEqual({ day: '2026-05-24', missing: false, primary: 69, secondary: 690 })
+  })
+
+  it('preserves missing-only chunks when aggregating compact chart data', () => {
+    const input = [
+      { day: '2026-06-01', missing: false, primary: 10, secondary: 4 },
+      { day: '2026-06-02', missing: false, primary: 12, secondary: 5 },
+      { day: '2026-06-03', missing: true, primary: 0, secondary: 0 },
+      { day: '2026-06-04', missing: true, primary: 0, secondary: 0 },
+    ]
+
+    expect(aggregateDualMetricChartPoints(input, 2)).toEqual([
+      { day: '2026-06-02', missing: false, primary: 22, secondary: 9 },
+      { day: '2026-06-04', missing: true, primary: 0, secondary: 0 },
+    ])
   })
 })
 
@@ -75,7 +91,7 @@ describe('aggregateSingleMetricChartPoints', () => {
     const aggregated = aggregateSingleMetricChartPoints(input, 7)
 
     expect(aggregated).toHaveLength(7)
-    expect(aggregated[0]).toEqual({ day: '2026-06-02', value: 3 })
-    expect(aggregated[6]).toEqual({ day: '2026-06-14', value: 27 })
+    expect(aggregated[0]).toEqual({ day: '2026-06-02', missing: false, value: 3 })
+    expect(aggregated[6]).toEqual({ day: '2026-06-14', missing: false, value: 27 })
   })
 })
