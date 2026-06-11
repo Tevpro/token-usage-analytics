@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import {
   Activity,
@@ -60,17 +60,36 @@ const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(
 )
 
 export const Route = createFileRoute('/')({
+  validateSearch: (search) => parseDashboardSearch(search),
   loader: async () => getDashboardSnapshot(),
   component: Home,
 })
 
 function Home() {
   const snapshot = Route.useLoaderData()
-  const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
-  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
-  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: Route.fullPath })
   const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
   const isNarrowViewport = useIsMobileBreakpoint()
+  const defaultTimeframe = useMemo(() => getInitialTimeframeSelection(snapshot), [snapshot])
+  const availableProjectIds = useMemo(
+    () => snapshot.projects.available.map((project) => project.projectId),
+    [snapshot.projects.available],
+  )
+  const activeTab = search.tab ?? 'overview'
+  const selectedProjectIds = useMemo(
+    () => parseSelectedProjectIds(search.projects, availableProjectIds),
+    [availableProjectIds, search.projects],
+  )
+  const timeframe = useMemo(
+    () => getSearchBackedTimeframe(search, defaultTimeframe),
+    [defaultTimeframe, search],
+  )
+  const updateSearch = (next: Partial<DashboardSearch>) =>
+    navigate({
+      replace: true,
+      search: (current: DashboardSearch) => sanitizeDashboardSearch({ ...current, ...next }, defaultTimeframe, availableProjectIds),
+    })
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
   const agentDataStatus = useMemo(
@@ -256,7 +275,7 @@ function Home() {
 
           <Tabs
             className="w-full"
-            onValueChange={(value) => setActiveTab(value as DashboardTab)}
+            onValueChange={(value) => updateSearch({ tab: value as DashboardTab })}
             value={activeTab}
           >
             <TabsList className="dashboard-tabs-list">
@@ -278,7 +297,7 @@ function Home() {
         <div className="toolbar-chip-group">
           <ProjectFilterChip
             availableProjects={snapshot.projects.available}
-            onChange={setSelectedProjectIds}
+            onChange={(projectIds) => updateSearch({ projects: serializeSelectedProjectIds(projectIds, availableProjectIds) })}
             selectedProjectIds={selectedProjectIds}
           />
           <div className="toolbar-chip gap-3">
@@ -286,14 +305,17 @@ function Home() {
             <Select
               onValueChange={(value) => {
                 const preset = value as TimeframePreset
-                setTimeframe((current) => ({
-                  endDay:
-                    current.endDay || projectSnapshot.filters.availableEndDay,
+                const nextTimeframe = {
+                  endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
                   preset,
-                  startDay:
-                    current.startDay ||
-                    projectSnapshot.filters.availableStartDay,
-                }))
+                  startDay: timeframe.startDay || projectSnapshot.filters.availableStartDay,
+                }
+
+                updateSearch({
+                  endDay: preset === 'custom' ? nextTimeframe.endDay : undefined,
+                  preset,
+                  startDay: preset === 'custom' ? nextTimeframe.startDay : undefined,
+                })
               }}
               value={timeframe.preset}
             >
@@ -321,10 +343,11 @@ function Home() {
                 }
                 min={projectSnapshot.filters.availableStartDay}
                 onChange={(event) =>
-                  setTimeframe((current) => ({
-                    ...current,
+                  updateSearch({
+                    endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
+                    preset: 'custom',
                     startDay: event.target.value,
-                  }))
+                  })
                 }
                 type="date"
                 value={
@@ -342,10 +365,11 @@ function Home() {
                   projectSnapshot.filters.availableStartDay
                 }
                 onChange={(event) =>
-                  setTimeframe((current) => ({
-                    ...current,
+                  updateSearch({
                     endDay: event.target.value,
-                  }))
+                    preset: 'custom',
+                    startDay: timeframe.startDay || projectSnapshot.filters.availableStartDay,
+                  })
                 }
                 type="date"
                 value={
@@ -1332,6 +1356,108 @@ function useIsMobileBreakpoint(maxWidth = 640) {
   return matches
 }
 
+function parseDashboardSearch(search: Record<string, unknown>): DashboardSearch {
+  const tab = getDashboardTabParam(search.tab)
+  const preset = getTimeframePresetParam(search.preset)
+  const startDay = getIsoDayParam(search.startDay)
+  const endDay = getIsoDayParam(search.endDay)
+  const projects = getProjectsParam(search.projects)
+
+  return {
+    endDay,
+    preset,
+    projects,
+    startDay,
+    tab,
+  }
+}
+
+function getSearchBackedTimeframe(search: DashboardSearch, fallback: TimeframeSelection): TimeframeSelection {
+  return {
+    endDay: search.endDay ?? fallback.endDay,
+    preset: search.preset ?? fallback.preset,
+    startDay: search.startDay ?? fallback.startDay,
+  }
+}
+
+function parseSelectedProjectIds(projects: string | undefined, availableProjectIds: string[]) {
+  if (!projects) {
+    return []
+  }
+
+  const selected = projects
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  if (selected.length === 0) {
+    return []
+  }
+
+  const selectedSet = new Set(selected)
+  const ordered = availableProjectIds.filter((projectId) => selectedSet.has(projectId))
+
+  return ordered.length === 0 || ordered.length === availableProjectIds.length ? [] : ordered
+}
+
+function serializeSelectedProjectIds(selectedProjectIds: string[], availableProjectIds: string[]) {
+  if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjectIds.length) {
+    return undefined
+  }
+
+  const selectedSet = new Set(selectedProjectIds)
+  const ordered = availableProjectIds.filter((projectId) => selectedSet.has(projectId))
+
+  return ordered.join(',') || undefined
+}
+
+function sanitizeDashboardSearch(
+  search: DashboardSearch,
+  defaultTimeframe: TimeframeSelection,
+  availableProjectIds: string[],
+): DashboardSearch {
+  const projects = serializeSelectedProjectIds(
+    parseSelectedProjectIds(search.projects, availableProjectIds),
+    availableProjectIds,
+  )
+
+  const normalizedPreset = search.preset ?? defaultTimeframe.preset
+  const startDay = getIsoDayParam(search.startDay)
+  const endDay = getIsoDayParam(search.endDay)
+
+  return {
+    endDay:
+      normalizedPreset === 'custom' && endDay !== defaultTimeframe.endDay
+        ? endDay
+        : undefined,
+    preset: normalizedPreset !== defaultTimeframe.preset ? normalizedPreset : undefined,
+    projects,
+    startDay:
+      normalizedPreset === 'custom' && startDay !== defaultTimeframe.startDay
+        ? startDay
+        : undefined,
+    tab: search.tab && search.tab !== 'overview' ? search.tab : undefined,
+  }
+}
+
+function getDashboardTabParam(value: unknown): DashboardTab | undefined {
+  return value === 'overview' || value === 'models' || value === 'cost' ? value : undefined
+}
+
+function getTimeframePresetParam(value: unknown): TimeframePreset | undefined {
+  return value === '24h' || value === '7d' || value === '30d' || value === '90d' || value === 'custom'
+    ? value
+    : undefined
+}
+
+function getIsoDayParam(value: unknown) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+}
+
+function getProjectsParam(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+}
+
 function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
   const dayCount = snapshot.filters.dailyRows.length
 
@@ -1600,6 +1726,14 @@ type ProjectFilterChipProps = {
 
 type ProjectBreakdownCardProps = {
   projects: DashboardProjectSummary[]
+}
+
+type DashboardSearch = {
+  endDay?: string
+  preset?: TimeframePreset
+  projects?: string
+  startDay?: string
+  tab?: DashboardTab
 }
 
 type DashboardTab = 'overview' | 'models' | 'cost'
