@@ -1173,9 +1173,15 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels 
 }
 
 function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
-  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
-  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
-  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })))
+  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })), {
+    fillMissingWithZero: true,
+  })
+  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })), {
+    fillMissingWithZero: true,
+  })
+  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })), {
+    fillMissingWithZero: true,
+  })
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1197,8 +1203,12 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
 }
 
 function LineChart({ data, title }: LineChartProps) {
-  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
-  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
+  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })), {
+    fillMissingWithZero: true,
+  })
+  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })), {
+    fillMissingWithZero: true,
+  })
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1662,14 +1672,17 @@ function formatRefreshBasisLabel(value: string) {
   }).format(new Date(value))
 }
 
-function toPolylineSegments(points: Array<{ missing?: boolean; value: number }>) {
+function toPolylineSegments(
+  points: Array<{ missing?: boolean; value: number }>,
+  options?: { fillMissingWithZero?: boolean },
+) {
   const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
   const maxValue = Math.max(...presentValues, 1)
   const segments: string[] = []
   let currentSegment: string[] = []
 
   points.forEach((point, index) => {
-    if (point.missing) {
+    if (point.missing && !options?.fillMissingWithZero) {
       if (currentSegment.length >= 2) {
         segments.push(currentSegment.join(' '))
       }
@@ -1678,7 +1691,8 @@ function toPolylineSegments(points: Array<{ missing?: boolean; value: number }>)
     }
 
     const x = 16 + index * (288 / Math.max(points.length - 1, 1))
-    const y = 130 - (point.value / maxValue) * 112
+    const value = point.missing && options?.fillMissingWithZero ? 0 : point.value
+    const y = 130 - (value / maxValue) * 112
     currentSegment.push(`${x},${y}`)
   })
 
