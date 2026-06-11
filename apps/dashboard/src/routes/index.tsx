@@ -21,6 +21,7 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
+  SelectValue,
 } from '#/components/ui/select'
 import {
   Table,
@@ -291,9 +292,9 @@ function Home() {
               value={timeframe.preset}
             >
               <SelectTrigger className="h-8 w-[148px] border-0 bg-transparent px-0 text-left text-sm font-medium text-slate-700 shadow-none focus:ring-0">
-                <span aria-label="Timeframe" className="truncate">
+                <SelectValue aria-label="Timeframe">
                   {getTimeframeTriggerLabel(projectSnapshot, timeframe)}
-                </span>
+                </SelectValue>
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="24h">Last 24 hours</SelectItem>
