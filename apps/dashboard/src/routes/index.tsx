@@ -421,7 +421,11 @@ function Home() {
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
                 <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
               ) : (
-                <TrafficBars data={trafficBarData} maxLabels={isNarrowViewport ? 4 : 6} />
+                <TrafficBars
+                  compactLabels={isNarrowViewport}
+                  data={trafficBarData}
+                  maxLabels={isNarrowViewport ? 4 : 6}
+                />
               )}
             </ChartCard>
 
@@ -605,7 +609,11 @@ function Home() {
               }
               title="Token volume"
             >
-              <TokenBars data={compactTokenVolumeData} maxLabels={isNarrowViewport ? 4 : 6} />
+              <TokenBars
+                compactLabels={isNarrowViewport}
+                data={compactTokenVolumeData}
+                maxLabels={isNarrowViewport ? 4 : 6}
+              />
             </ChartCard>
 
             <ChartCard
@@ -621,7 +629,11 @@ function Home() {
               }
               title={costChartTitle}
             >
-              <CostBars data={compactCostByDayData} maxLabels={isNarrowViewport ? 4 : 6} />
+              <CostBars
+                compactLabels={isNarrowViewport}
+                data={compactCostByDayData}
+                maxLabels={isNarrowViewport ? 4 : 6}
+              />
             </ChartCard>
           </section>
         </div>
@@ -676,7 +688,11 @@ function Home() {
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
                 <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
               ) : (
-                <TrafficBars data={trafficBarData} maxLabels={isNarrowViewport ? 4 : 6} />
+                <TrafficBars
+                  compactLabels={isNarrowViewport}
+                  data={trafficBarData}
+                  maxLabels={isNarrowViewport ? 4 : 6}
+                />
               )}
             </ChartCard>
 
@@ -692,7 +708,11 @@ function Home() {
             </ChartCard>
 
             <ChartCard footer={isNarrowViewport ? <LegendStats items={costSummaryItems} /> : undefined} title={costChartTitle}>
-              <CostBars data={compactCostByDayData} maxLabels={isNarrowViewport ? 4 : 6} />
+              <CostBars
+                compactLabels={isNarrowViewport}
+                data={compactCostByDayData}
+                maxLabels={isNarrowViewport ? 4 : 6}
+              />
             </ChartCard>
           </section>
 
@@ -1073,7 +1093,7 @@ function LegendStats({ items }: LegendStatsProps) {
   )
 }
 
-function TrafficBars({ data, maxLabels = 6 }: TrafficBarsProps) {
+function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
   const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
@@ -1098,7 +1118,9 @@ function TrafficBars({ data, maxLabels = 6 }: TrafficBarsProps) {
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span className="chart-label">{formatTrafficBucketLabel(item.startDay, item.endDay)}</span>
+            <span className="chart-label">
+              {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+            </span>
           ) : (
             <span aria-hidden className="chart-label chart-label-placeholder" />
           )}
@@ -1176,7 +1198,7 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   )
 }
 
-function TokenBars({ data, maxLabels = 6 }: TokenBarsProps) {
+function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProps) {
   const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
 
   return (
@@ -1199,7 +1221,7 @@ function TokenBars({ data, maxLabels = 6 }: TokenBarsProps) {
             </div>
             {shouldRenderTick(index, data.length, maxLabels) ? (
               <span className="chart-label" title={formatBucketLabel(item.day)}>
-                {formatDayShort(item.day)}
+                {formatDayShort(item.day, compactLabels)}
               </span>
             ) : (
               <span aria-hidden className="chart-label chart-label-placeholder" />
@@ -1211,7 +1233,7 @@ function TokenBars({ data, maxLabels = 6 }: TokenBarsProps) {
   )
 }
 
-function CostBars({ data, maxLabels = 6 }: CostBarsProps) {
+function CostBars({ compactLabels = false, data, maxLabels = 6 }: CostBarsProps) {
   const maxCost = Math.max(...data.map((item) => item.cost), 1)
 
   return (
@@ -1226,7 +1248,7 @@ function CostBars({ data, maxLabels = 6 }: CostBarsProps) {
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
             <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
-              {formatDayShort(item.day)}
+              {formatDayShort(item.day, compactLabels)}
             </span>
           ) : (
             <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
@@ -1333,15 +1355,15 @@ function formatBucketLabel(value: string) {
   }).format(date)
 }
 
-function formatDayShort(value: string) {
+function formatDayShort(value: string, compact = false) {
   const isTimestamp = value.includes('T')
   const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
 
   return new Intl.DateTimeFormat('en-US', {
-    day: isTimestamp ? undefined : 'numeric',
+    day: compact || !isTimestamp ? 'numeric' : undefined,
     hour: isTimestamp ? 'numeric' : undefined,
-    minute: isTimestamp ? '2-digit' : undefined,
-    month: isTimestamp ? undefined : 'short',
+    minute: isTimestamp && !compact ? '2-digit' : undefined,
+    month: compact ? 'numeric' : isTimestamp ? undefined : 'short',
     timeZone: isTimestamp ? DASHBOARD_TIME_ZONE : 'UTC',
   }).format(date)
 }
@@ -1354,19 +1376,31 @@ function shouldRenderTick(index: number, total: number, maxLabels = 6) {
   return index % stride === 0
 }
 
-function formatTrafficBucketLabel(startDay: string, endDay: string) {
+function formatTrafficBucketLabel(startDay: string, endDay: string, compact = false) {
   if (startDay === endDay) {
-    return formatDayShort(startDay)
+    return formatDayShort(startDay, compact)
   }
 
   const start = new Date(startDay)
   const end = new Date(endDay)
+
+  if (!startDay.includes('T') && !endDay.includes('T')) {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      day: 'numeric',
+      month: compact ? 'numeric' : 'short',
+      timeZone: 'UTC',
+    })
+
+    return `${formatter.format(start)}-${formatter.format(end)}`
+  }
+
   const formatter = new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
+    minute: compact ? undefined : '2-digit',
     timeZone: DASHBOARD_TIME_ZONE,
   })
 
-  return `${formatter.format(start)}–${formatter.format(end)}`
+  return `${formatter.format(start)}-${formatter.format(end)}`
 }
 
 function formatRefreshBasisLabel(value: string) {
@@ -1449,6 +1483,7 @@ type ModelUsageBreakdownCardProps = {
 }
 
 type TrafficBarsProps = {
+  compactLabels?: boolean
   data: Array<{
     endDay: string
     primary: number
@@ -1493,6 +1528,7 @@ type ModelBarsProps = {
 }
 
 type TokenBarsProps = {
+  compactLabels?: boolean
   data: Array<{
     day: string
     inputTokens: number
@@ -1502,6 +1538,7 @@ type TokenBarsProps = {
 }
 
 type CostBarsProps = {
+  compactLabels?: boolean
   data: Array<{
     cost: number
     day: string
