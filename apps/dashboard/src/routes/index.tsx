@@ -21,7 +21,6 @@ import {
   SelectContent,
   SelectItem,
   SelectTrigger,
-  SelectValue,
 } from '#/components/ui/select'
 import {
   Table,
@@ -292,10 +291,9 @@ function Home() {
               value={timeframe.preset}
             >
               <SelectTrigger className="h-8 w-[148px] border-0 bg-transparent px-0 text-left text-sm font-medium text-slate-700 shadow-none focus:ring-0">
-                <SelectValue
-                  aria-label="Timeframe"
-                  placeholder="Select window"
-                />
+                <span aria-label="Timeframe" className="truncate">
+                  {getTimeframeTriggerLabel(projectSnapshot, timeframe)}
+                </span>
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="24h">Last 24 hours</SelectItem>
@@ -1303,6 +1301,71 @@ function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSel
     preset: '30d',
     startDay: snapshot.filters.availableStartDay,
   }
+}
+
+function getTimeframeTriggerLabel(snapshot: DashboardSnapshot, selection: TimeframeSelection) {
+  if (selection.preset === 'custom') {
+    return 'Custom range'
+  }
+
+  const availableDayCount = snapshot.filters.dailyRows.length
+  const requestedDayCount =
+    selection.preset === '24h'
+      ? 1
+      : selection.preset === '7d'
+        ? 7
+        : selection.preset === '30d'
+          ? 30
+          : 90
+
+  if (availableDayCount < requestedDayCount) {
+    return formatCompactDateRange(
+      snapshot.filters.availableStartDay,
+      snapshot.filters.availableEndDay,
+    )
+  }
+
+  return selection.preset === '24h'
+    ? 'Last 24 hours'
+    : selection.preset === '7d'
+      ? 'Last 7 days'
+      : selection.preset === '30d'
+        ? 'Last 30 days'
+        : 'Last 90 days'
+}
+
+function formatCompactDateRange(startDay: string, endDay: string) {
+  if (!startDay || !endDay) {
+    return 'Select window'
+  }
+
+  if (startDay === endDay) {
+    return formatShortToolbarDay(startDay)
+  }
+
+  const start = new Date(`${startDay}T00:00:00Z`)
+  const end = new Date(`${endDay}T00:00:00Z`)
+  const sameMonth =
+    start.getUTCFullYear() === end.getUTCFullYear() &&
+    start.getUTCMonth() === end.getUTCMonth()
+
+  if (sameMonth) {
+    return `${formatShortToolbarMonthDay(start)}–${end.getUTCDate()}`
+  }
+
+  return `${formatShortToolbarMonthDay(start)}–${formatShortToolbarMonthDay(end)}`
+}
+
+function formatShortToolbarDay(value: string) {
+  return formatShortToolbarMonthDay(new Date(`${value}T00:00:00Z`))
+}
+
+function formatShortToolbarMonthDay(value: Date) {
+  return new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(value)
 }
 
 function formatCompact(value: number) {
