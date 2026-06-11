@@ -562,6 +562,32 @@
   -webkit-line-clamp: 2;
 }
 
+.chart-block-bars-rotated {
+  height: 258px;
+}
+
+.chart-block-bars-rotated .bar-group {
+  gap: 4px;
+}
+
+.chart-block-bars-rotated .bar-stack {
+  height: 164px;
+}
+
+.chart-label-rotated {
+  min-height: 5.6rem;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: nowrap;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+}
+
+.chart-label-rotated.chart-label-wide {
+  max-width: none;
+}
+
 .line-chart {
   display: block;
   width: 100%;
@@ -588,9 +614,21 @@
     height: 150px;
   }
 
+  .chart-block-bars-rotated {
+    height: 214px;
+  }
+
+  .chart-block-bars-rotated .bar-stack {
+    height: 124px;
+  }
+
   .chart-label {
     min-height: 1.8rem;
     font-size: 0.7rem;
+  }
+
+  .chart-label-rotated {
+    min-height: 4.8rem;
   }
 
   .chart-label-wide {
