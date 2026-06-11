@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
@@ -32,7 +32,11 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
-import { aggregateTrafficChartPoints } from '#/lib/chart-presentation'
+import {
+  aggregateDualMetricChartPoints,
+  aggregateSingleMetricChartPoints,
+  aggregateTrafficChartPoints,
+} from '#/lib/chart-presentation'
 import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
@@ -64,19 +68,11 @@ function Home() {
   const snapshot = Route.useLoaderData()
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
-  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() =>
-    getInitialTimeframeSelection(snapshot),
-  )
-  const [trafficChartMode, setTrafficChartMode] =
-    useState<TrafficChartMode>('bars')
-  const projectSnapshot = useMemo(
-    () => filterSnapshotByProjects(snapshot, selectedProjectIds),
-    [selectedProjectIds, snapshot],
-  )
-  const activeSnapshot = useMemo(
-    () => filterSnapshotByTimeframe(projectSnapshot, timeframe),
-    [projectSnapshot, timeframe],
-  )
+  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
+  const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
+  const isNarrowViewport = useIsMobileBreakpoint()
+  const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
+  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
   const agentDataStatus = useMemo(
     () =>
       getAgentDataStatus(projectSnapshot.headline.generatedAt, {
@@ -111,6 +107,110 @@ function Home() {
             startDay: item.day,
           })),
     [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
+  )
+  const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
+  const compactTrafficTrendData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateTrafficChartPoints(activeSnapshot.charts.requestsCostCache, mobileBucketCount)
+        : activeSnapshot.charts.requestsCostCache.map((item) => ({
+            ...item,
+            endDay: item.day,
+            startDay: item.day,
+          })),
+    [activeSnapshot.charts.requestsCostCache, isNarrowViewport, mobileBucketCount],
+  )
+  const compactInputOutputData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateDualMetricChartPoints(activeSnapshot.charts.inputOutput, mobileBucketCount)
+        : activeSnapshot.charts.inputOutput,
+    [activeSnapshot.charts.inputOutput, isNarrowViewport, mobileBucketCount],
+  )
+  const compactTokenVolumeData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateDualMetricChartPoints(
+            activeSnapshot.charts.tokenVolume.map((item) => ({
+              day: item.day,
+              primary: item.inputTokens,
+              secondary: item.outputTokens,
+            })),
+            mobileBucketCount,
+          ).map((item) => ({
+            day: item.day,
+            inputTokens: item.primary,
+            outputTokens: item.secondary,
+          }))
+        : activeSnapshot.charts.tokenVolume,
+    [activeSnapshot.charts.tokenVolume, isNarrowViewport, mobileBucketCount],
+  )
+  const compactCostByDayData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateSingleMetricChartPoints(
+            activeSnapshot.charts.costByDay.map((item) => ({ day: item.day, value: item.cost })),
+            mobileBucketCount,
+          ).map((item) => ({ day: item.day, cost: item.value }))
+        : activeSnapshot.charts.costByDay,
+    [activeSnapshot.charts.costByDay, isNarrowViewport, mobileBucketCount],
+  )
+  const trafficSummaryItems = useMemo(
+    () => [
+      {
+        accent: 'var(--chart-grey)',
+        key: 'traffic-requests',
+        label: 'Requests',
+        value: activeSnapshot.charts.requestsCostCache.reduce((sum, item) => sum + item.primary, 0).toLocaleString('en-US'),
+      },
+      {
+        accent: 'var(--chart-red)',
+        key: 'traffic-cost',
+        label: 'Allocated cost',
+        value: formatCurrency(activeSnapshot.charts.requestsCostCache.reduce((sum, item) => sum + item.secondary, 0) / 10),
+      },
+      {
+        accent: 'var(--chart-violet)',
+        key: 'traffic-cache',
+        label: 'Avg cached',
+        value: `${calculateAverageTrafficCacheShare(activeSnapshot.charts.requestsCostCache).toFixed(0)}%`,
+      },
+    ],
+    [activeSnapshot.charts.requestsCostCache],
+  )
+  const inputOutputSummaryItems = useMemo(
+    () => [
+      {
+        accent: 'var(--chart-violet)',
+        key: 'input-total',
+        label: 'Input tokens',
+        value: formatCompact(activeSnapshot.charts.inputOutput.reduce((sum, item) => sum + item.primary, 0)),
+      },
+      {
+        accent: 'var(--chart-ink)',
+        key: 'output-total',
+        label: 'Output tokens',
+        value: formatCompact(activeSnapshot.charts.inputOutput.reduce((sum, item) => sum + item.secondary, 0)),
+      },
+    ],
+    [activeSnapshot.charts.inputOutput],
+  )
+  const costSummaryItems = useMemo(
+    () => [
+      {
+        accent: 'var(--chart-magenta)',
+        key: 'cost-total',
+        label: 'Total cost',
+        value: formatCurrency(activeSnapshot.charts.costByDay.reduce((sum, item) => sum + item.cost, 0)),
+      },
+      {
+        accent: 'var(--chart-magenta)',
+        key: 'cost-peak',
+        label: 'Peak bucket',
+        value: formatCurrency(Math.max(...activeSnapshot.charts.costByDay.map((item) => item.cost), 0)),
+      },
+    ],
+    [activeSnapshot.charts.costByDay],
   )
 
   return (
@@ -310,6 +410,7 @@ function Home() {
                   </div>
                 ) : null
               }
+              footer={isNarrowViewport ? <LegendStats items={trafficSummaryItems} /> : undefined}
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -318,26 +419,21 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart
-                  data={activeSnapshot.charts.requestsCostCache}
-                  title="Requests, cost, and cache trends"
-                />
+                <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
               ) : (
-                <TrafficBars data={trafficBarData} />
+                <TrafficBars data={trafficBarData} maxLabels={isNarrowViewport ? 4 : 6} />
               )}
             </ChartCard>
 
             <ChartCard
+              footer={isNarrowViewport ? <LegendStats items={inputOutputSummaryItems} /> : undefined}
               legend={[
                 { label: 'Input tokens', color: 'var(--chart-violet)' },
                 { label: 'Output tokens', color: 'var(--chart-ink)' },
               ]}
               title="Input vs output"
             >
-              <LineChart
-                data={activeSnapshot.charts.inputOutput}
-                title="Input and output tokens"
-              />
+              <LineChart data={compactInputOutputData} title="Input and output tokens" />
             </ChartCard>
 
             <Card className="panel-card panel-card-signals">
@@ -509,7 +605,7 @@ function Home() {
               }
               title="Token volume"
             >
-              <TokenBars data={activeSnapshot.charts.tokenVolume} />
+              <TokenBars data={compactTokenVolumeData} maxLabels={isNarrowViewport ? 4 : 6} />
             </ChartCard>
 
             <ChartCard
@@ -525,7 +621,7 @@ function Home() {
               }
               title={costChartTitle}
             >
-              <CostBars data={activeSnapshot.charts.costByDay} />
+              <CostBars data={compactCostByDayData} maxLabels={isNarrowViewport ? 4 : 6} />
             </ChartCard>
           </section>
         </div>
@@ -569,6 +665,7 @@ function Home() {
                   </div>
                 ) : null
               }
+              footer={isNarrowViewport ? <LegendStats items={trafficSummaryItems} /> : undefined}
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -577,30 +674,25 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart
-                  data={activeSnapshot.charts.requestsCostCache}
-                  title="Requests, cost, and cache trends"
-                />
+                <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
               ) : (
-                <TrafficBars data={trafficBarData} />
+                <TrafficBars data={trafficBarData} maxLabels={isNarrowViewport ? 4 : 6} />
               )}
             </ChartCard>
 
             <ChartCard
+              footer={isNarrowViewport ? <LegendStats items={inputOutputSummaryItems} /> : undefined}
               legend={[
                 { label: 'Input tokens', color: 'var(--chart-violet)' },
                 { label: 'Output tokens', color: 'var(--chart-ink)' },
               ]}
               title="Input vs output"
             >
-              <LineChart
-                data={activeSnapshot.charts.inputOutput}
-                title="Input and output tokens"
-              />
+              <LineChart data={compactInputOutputData} title="Input and output tokens" />
             </ChartCard>
 
-            <ChartCard title={costChartTitle}>
-              <CostBars data={activeSnapshot.charts.costByDay} />
+            <ChartCard footer={isNarrowViewport ? <LegendStats items={costSummaryItems} /> : undefined} title={costChartTitle}>
+              <CostBars data={compactCostByDayData} maxLabels={isNarrowViewport ? 4 : 6} />
             </ChartCard>
           </section>
 
@@ -981,13 +1073,13 @@ function LegendStats({ items }: LegendStatsProps) {
   )
 }
 
-function TrafficBars({ data }: TrafficBarsProps) {
+function TrafficBars({ data, maxLabels = 6 }: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
   const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
   return (
     <div className="chart-block chart-block-bars">
-      {data.map((item) => (
+      {data.map((item, index) => (
         <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
             <span
@@ -1005,9 +1097,11 @@ function TrafficBars({ data }: TrafficBarsProps) {
               style={{ height: `${Math.max(item.tertiary, 8)}%` }}
             />
           </div>
-          <span className="chart-label">
-            {formatTrafficBucketLabel(item.startDay, item.endDay)}
-          </span>
+          {shouldRenderTick(index, data.length, maxLabels) ? (
+            <span className="chart-label">{formatTrafficBucketLabel(item.startDay, item.endDay)}</span>
+          ) : (
+            <span aria-hidden className="chart-label chart-label-placeholder" />
+          )}
         </div>
       ))}
     </div>
@@ -1082,11 +1176,8 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   )
 }
 
-function TokenBars({ data }: TokenBarsProps) {
-  const maxTokens = Math.max(
-    ...data.map((item) => item.inputTokens + item.outputTokens),
-    1,
-  )
+function TokenBars({ data, maxLabels = 6 }: TokenBarsProps) {
+  const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
 
   return (
     <div className="chart-block chart-block-bars">
@@ -1106,7 +1197,7 @@ function TokenBars({ data }: TokenBarsProps) {
                 style={{ height: `${outputHeight}%` }}
               />
             </div>
-            {shouldRenderTick(index, data.length) ? (
+            {shouldRenderTick(index, data.length, maxLabels) ? (
               <span className="chart-label" title={formatBucketLabel(item.day)}>
                 {formatDayShort(item.day)}
               </span>
@@ -1120,7 +1211,7 @@ function TokenBars({ data }: TokenBarsProps) {
   )
 }
 
-function CostBars({ data }: CostBarsProps) {
+function CostBars({ data, maxLabels = 6 }: CostBarsProps) {
   const maxCost = Math.max(...data.map((item) => item.cost), 1)
 
   return (
@@ -1133,7 +1224,7 @@ function CostBars({ data }: CostBarsProps) {
               style={{ height: `${(item.cost / maxCost) * 100}%` }}
             />
           </div>
-          {shouldRenderTick(index, data.length) ? (
+          {shouldRenderTick(index, data.length, maxLabels) ? (
             <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
               {formatDayShort(item.day)}
             </span>
@@ -1146,9 +1237,27 @@ function CostBars({ data }: CostBarsProps) {
   )
 }
 
-function getInitialTimeframeSelection(
-  snapshot: DashboardSnapshot,
-): TimeframeSelection {
+function useIsMobileBreakpoint(maxWidth = 640) {
+  const [matches, setMatches] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return undefined
+    }
+
+    const mediaQuery = window.matchMedia(`(max-width: ${maxWidth}px)`)
+    const update = () => setMatches(mediaQuery.matches)
+
+    update()
+    mediaQuery.addEventListener('change', update)
+
+    return () => mediaQuery.removeEventListener('change', update)
+  }, [maxWidth])
+
+  return matches
+}
+
+function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
   const dayCount = snapshot.filters.dailyRows.length
 
   if (dayCount <= 1) {
@@ -1179,6 +1288,20 @@ function formatCompact(value: number) {
     maximumFractionDigits: 1,
     notation: 'compact',
   }).format(value)
+}
+
+function calculateAverageTrafficCacheShare(data: Array<{ primary: number; tertiary: number }>) {
+  if (data.length === 0) {
+    return 0
+  }
+
+  const totalRequests = data.reduce((sum, item) => sum + item.primary, 0)
+
+  if (totalRequests > 0) {
+    return data.reduce((sum, item) => sum + item.primary * item.tertiary, 0) / totalRequests
+  }
+
+  return data.reduce((sum, item) => sum + item.tertiary, 0) / data.length
 }
 
 function formatCurrency(value: number) {
@@ -1333,6 +1456,7 @@ type TrafficBarsProps = {
     startDay: string
     tertiary: number
   }>
+  maxLabels?: number
 }
 
 type TrafficTrendChartProps = {
@@ -1374,6 +1498,7 @@ type TokenBarsProps = {
     inputTokens: number
     outputTokens: number
   }>
+  maxLabels?: number
 }
 
 type CostBarsProps = {
@@ -1381,4 +1506,5 @@ type CostBarsProps = {
     cost: number
     day: string
   }>
+  maxLabels?: number
 }
