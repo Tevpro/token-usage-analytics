@@ -446,8 +446,8 @@ function Home() {
                   <CardTitle className="panel-title">Signals</CardTitle>
                 </div>
               </CardHeader>
-              <CardContent className="p-0">
-                <div className="issue-list">
+              <CardContent className="issue-list-shell p-0">
+                <div className="issue-list issue-list-scroll">
                   {activeSnapshot.issues.map((issue) => (
                     <div
                       className="issue-row"

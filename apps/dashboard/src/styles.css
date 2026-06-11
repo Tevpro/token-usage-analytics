@@ -647,9 +647,21 @@
   stroke: var(--chart-red);
 }
 
+.panel-card-signals {
+  min-height: 0;
+}
+
+.issue-list-shell {
+  min-height: 0;
+}
+
 .issue-list {
   display: flex;
   flex-direction: column;
+}
+
+.issue-list-scroll {
+  min-height: 0;
 }
 
 .issue-row {
@@ -694,6 +706,29 @@
 @media (min-width: 980px) {
   .callout-strip {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1100px) {
+  .panel-card-signals {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-card-signals .panel-header-row {
+    flex: 0 0 auto;
+  }
+
+  .panel-card-signals .issue-list-shell {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .issue-list-scroll {
+    max-height: 316px;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
   }
 }
 
