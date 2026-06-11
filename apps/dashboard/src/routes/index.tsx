@@ -1129,13 +1129,21 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels 
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span className={rotateLabels ? 'chart-label chart-label-rotated' : 'chart-label'}>
-              {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
-            </span>
+            rotateLabels ? (
+              <span className="chart-label chart-label-rotated-slot">
+                <span className="chart-label-rotated-text">
+                  {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+                </span>
+              </span>
+            ) : (
+              <span className="chart-label">
+                {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+              </span>
+            )
           ) : (
             <span
               aria-hidden
-              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated' : 'chart-label chart-label-placeholder'}
+              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder'}
             />
           )}
         </div>
@@ -1244,16 +1252,21 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = 
               />
             </div>
             {shouldRenderTick(index, data.length, maxLabels) ? (
-              <span
-                className={rotateLabels ? 'chart-label chart-label-rotated' : 'chart-label'}
-                title={formatBucketLabel(item.day)}
-              >
-                {formatDayShort(item.day, compactLabels)}
-              </span>
+              rotateLabels ? (
+                <span className="chart-label chart-label-rotated-slot" title={formatBucketLabel(item.day)}>
+                  <span className="chart-label-rotated-text">
+                    {formatDayShort(item.day, compactLabels)}
+                  </span>
+                </span>
+              ) : (
+                <span className="chart-label" title={formatBucketLabel(item.day)}>
+                  {formatDayShort(item.day, compactLabels)}
+                </span>
+              )
             ) : (
               <span
                 aria-hidden
-                className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated' : 'chart-label chart-label-placeholder'}
+                className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder'}
               />
             )}
           </div>
@@ -1277,16 +1290,21 @@ function CostBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = f
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span
-              className={rotateLabels ? 'chart-label chart-label-wide chart-label-rotated' : 'chart-label chart-label-wide'}
-              title={formatBucketLabel(item.day)}
-            >
-              {formatDayShort(item.day, compactLabels)}
-            </span>
+            rotateLabels ? (
+              <span className="chart-label chart-label-rotated-slot" title={formatBucketLabel(item.day)}>
+                <span className="chart-label-rotated-text">
+                  {formatDayShort(item.day, compactLabels)}
+                </span>
+              </span>
+            ) : (
+              <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
+                {formatDayShort(item.day, compactLabels)}
+              </span>
+            )
           ) : (
             <span
               aria-hidden
-              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-wide chart-label-rotated' : 'chart-label chart-label-placeholder chart-label-wide'}
+              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder chart-label-wide'}
             />
           )}
         </div>

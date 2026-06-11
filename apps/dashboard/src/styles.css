@@ -574,18 +574,25 @@
   height: 164px;
 }
 
-.chart-label-rotated {
-  display: inline-block;
+.chart-label-rotated-slot {
+  display: flex;
+  width: 100%;
   min-height: 5.6rem;
+  align-items: center;
+  justify-content: center;
   overflow: visible;
   text-overflow: clip;
-  white-space: nowrap;
+}
+
+.chart-label-rotated-text {
+  display: inline-block;
   line-height: 1;
+  white-space: nowrap;
   transform: rotate(-90deg);
   transform-origin: center;
 }
 
-.chart-label-rotated.chart-label-wide {
+.chart-label-rotated-slot.chart-label-wide {
   max-width: none;
 }
 
@@ -628,7 +635,7 @@
     font-size: 0.7rem;
   }
 
-  .chart-label-rotated {
+  .chart-label-rotated-slot {
     min-height: 4.8rem;
   }
 
