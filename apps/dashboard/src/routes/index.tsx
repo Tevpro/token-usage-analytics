@@ -109,6 +109,16 @@ function Home() {
     [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
   )
   const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
+  const rotateDailyTickLabels =
+    activeSnapshot.headline.granularity === 'day' &&
+    timeframe.preset === '7d' &&
+    activeSnapshot.table.length >= 7
+  const trafficMaxLabels =
+    rotateDailyTickLabels ? activeSnapshot.charts.requestsCostCache.length : isNarrowViewport ? 4 : 6
+  const tokenMaxLabels =
+    rotateDailyTickLabels ? activeSnapshot.charts.tokenVolume.length : isNarrowViewport ? 4 : 6
+  const costMaxLabels =
+    rotateDailyTickLabels ? activeSnapshot.charts.costByDay.length : isNarrowViewport ? 4 : 6
   const compactTrafficTrendData = useMemo(
     () =>
       isNarrowViewport
@@ -423,7 +433,8 @@ function Home() {
                 <TrafficBars
                   compactLabels={isNarrowViewport}
                   data={trafficBarData}
-                  maxLabels={isNarrowViewport ? 4 : 6}
+                  maxLabels={trafficMaxLabels}
+                  rotateLabels={rotateDailyTickLabels}
                 />
               )}
             </ChartCard>
@@ -611,7 +622,8 @@ function Home() {
               <TokenBars
                 compactLabels={isNarrowViewport}
                 data={compactTokenVolumeData}
-                maxLabels={isNarrowViewport ? 4 : 6}
+                maxLabels={tokenMaxLabels}
+                rotateLabels={rotateDailyTickLabels}
               />
             </ChartCard>
 
@@ -631,7 +643,8 @@ function Home() {
               <CostBars
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
-                maxLabels={isNarrowViewport ? 4 : 6}
+                maxLabels={costMaxLabels}
+                rotateLabels={rotateDailyTickLabels}
               />
             </ChartCard>
           </section>
@@ -690,7 +703,8 @@ function Home() {
                 <TrafficBars
                   compactLabels={isNarrowViewport}
                   data={trafficBarData}
-                  maxLabels={isNarrowViewport ? 4 : 6}
+                  maxLabels={trafficMaxLabels}
+                  rotateLabels={rotateDailyTickLabels}
                 />
               )}
             </ChartCard>
@@ -710,7 +724,8 @@ function Home() {
               <CostBars
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
-                maxLabels={isNarrowViewport ? 4 : 6}
+                maxLabels={costMaxLabels}
+                rotateLabels={rotateDailyTickLabels}
               />
             </ChartCard>
           </section>
@@ -1092,12 +1107,12 @@ function LegendStats({ items }: LegendStatsProps) {
   )
 }
 
-function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBarsProps) {
+function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
   const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
   return (
-    <div className="chart-block chart-block-bars">
+    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-bars-rotated' : 'chart-block chart-block-bars'}>
       {data.map((item, index) => (
         <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
@@ -1117,11 +1132,14 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBars
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span className="chart-label">
+            <span className={rotateLabels ? 'chart-label chart-label-rotated' : 'chart-label'}>
               {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
             </span>
           ) : (
-            <span aria-hidden className="chart-label chart-label-placeholder" />
+            <span
+              aria-hidden
+              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated' : 'chart-label chart-label-placeholder'}
+            />
           )}
         </div>
       ))}
@@ -1207,11 +1225,11 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   )
 }
 
-function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProps) {
+function TokenBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: TokenBarsProps) {
   const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
 
   return (
-    <div className="chart-block chart-block-bars">
+    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-bars-rotated' : 'chart-block chart-block-bars'}>
       {data.map((item, index) => {
         const inputHeight = (item.inputTokens / maxTokens) * 100
         const outputHeight = (item.outputTokens / maxTokens) * 100
@@ -1229,11 +1247,17 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProp
               />
             </div>
             {shouldRenderTick(index, data.length, maxLabels) ? (
-              <span className="chart-label" title={formatBucketLabel(item.day)}>
+              <span
+                className={rotateLabels ? 'chart-label chart-label-rotated' : 'chart-label'}
+                title={formatBucketLabel(item.day)}
+              >
                 {formatDayShort(item.day, compactLabels)}
               </span>
             ) : (
-              <span aria-hidden className="chart-label chart-label-placeholder" />
+              <span
+                aria-hidden
+                className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated' : 'chart-label chart-label-placeholder'}
+              />
             )}
           </div>
         )
@@ -1242,11 +1266,11 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProp
   )
 }
 
-function CostBars({ compactLabels = false, data, maxLabels = 6 }: CostBarsProps) {
+function CostBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: CostBarsProps) {
   const maxCost = Math.max(...data.map((item) => item.cost), 1)
 
   return (
-    <div className="chart-block chart-block-bars chart-block-thick">
+    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-thick chart-block-bars-rotated' : 'chart-block chart-block-bars chart-block-thick'}>
       {data.map((item, index) => (
         <div className="bar-group" key={item.day}>
           <div className="bar-stack bar-stack-wide">
@@ -1256,11 +1280,17 @@ function CostBars({ compactLabels = false, data, maxLabels = 6 }: CostBarsProps)
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
+            <span
+              className={rotateLabels ? 'chart-label chart-label-wide chart-label-rotated' : 'chart-label chart-label-wide'}
+              title={formatBucketLabel(item.day)}
+            >
               {formatDayShort(item.day, compactLabels)}
             </span>
           ) : (
-            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+            <span
+              aria-hidden
+              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-wide chart-label-rotated' : 'chart-label chart-label-placeholder chart-label-wide'}
+            />
           )}
         </div>
       ))}
@@ -1570,10 +1600,10 @@ type ModelUsageBreakdownCardProps = {
     tokens: number
   }>
 }
-
 type TrafficBarsProps = {
   compactLabels?: boolean
   data: Array<{
+    day: string
     endDay: string
     primary: number
     secondary: number
@@ -1581,6 +1611,7 @@ type TrafficBarsProps = {
     tertiary: number
   }>
   maxLabels?: number
+  rotateLabels?: boolean
 }
 
 type TrafficTrendChartProps = {
@@ -1627,6 +1658,7 @@ type TokenBarsProps = {
     outputTokens: number
   }>
   maxLabels?: number
+  rotateLabels?: boolean
 }
 
 type CostBarsProps = {
@@ -1637,4 +1669,5 @@ type CostBarsProps = {
     missing?: boolean
   }>
   maxLabels?: number
+  rotateLabels?: boolean
 }
