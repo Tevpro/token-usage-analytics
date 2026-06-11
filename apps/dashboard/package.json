@@ -17,6 +17,7 @@
     "check": "prettier --check .",
     "cf:typegen": "wrangler types",
     "cf:d1:migrate:local": "wrangler d1 migrations apply token_analytics --local",
+    "cf:d1:bootstrap:local": "node ./scripts/bootstrap-local-d1.mjs",
     "cf:d1:migrate:remote": "wrangler d1 migrations apply token_analytics --remote",
     "deploy": "npm run build && wrangler deploy"
   },
