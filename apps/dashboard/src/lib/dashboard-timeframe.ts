@@ -1,3 +1,4 @@
+import { addDaysToIsoDay, formatHoustonDay } from '#/lib/dashboard-timezone'
 import { buildSnapshotFromRollups } from '#/lib/token-analytics'
 import type {
   DashboardIssueByDay,
@@ -189,16 +190,9 @@ function maxDay(left: string, right: string) {
 }
 
 function addDays(day: string, days: number) {
-  const next = new Date(`${day}T00:00:00Z`)
-  next.setUTCDate(next.getUTCDate() + days)
-  return next.toISOString().slice(0, 10)
+  return addDaysToIsoDay(day, days)
 }
 
 function formatDay(value: string) {
-  return new Intl.DateTimeFormat('en-US', {
-    day: 'numeric',
-    month: 'short',
-    timeZone: 'UTC',
-    year: 'numeric',
-  }).format(new Date(`${value}T00:00:00Z`))
+  return formatHoustonDay(value)
 }
