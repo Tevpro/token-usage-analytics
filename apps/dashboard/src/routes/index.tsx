@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import {
   Activity,
@@ -60,17 +60,36 @@ const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(
 )
 
 export const Route = createFileRoute('/')({
+  validateSearch: (search) => parseDashboardSearch(search),
   loader: async () => getDashboardSnapshot(),
   component: Home,
 })
 
 function Home() {
   const snapshot = Route.useLoaderData()
-  const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
-  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
-  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: Route.fullPath })
   const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
   const isNarrowViewport = useIsMobileBreakpoint()
+  const defaultTimeframe = useMemo(() => getInitialTimeframeSelection(snapshot), [snapshot])
+  const availableProjectIds = useMemo(
+    () => snapshot.projects.available.map((project) => project.projectId),
+    [snapshot.projects.available],
+  )
+  const activeTab = search.tab ?? 'overview'
+  const selectedProjectIds = useMemo(
+    () => parseSelectedProjectIds(search.projects, availableProjectIds),
+    [availableProjectIds, search.projects],
+  )
+  const timeframe = useMemo(
+    () => getSearchBackedTimeframe(search, defaultTimeframe),
+    [defaultTimeframe, search],
+  )
+  const updateSearch = (next: Partial<DashboardSearch>) =>
+    navigate({
+      replace: true,
+      search: (current: DashboardSearch) => sanitizeDashboardSearch({ ...current, ...next }, defaultTimeframe, availableProjectIds),
+    })
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
   const agentDataStatus = useMemo(
@@ -109,6 +128,7 @@ function Home() {
     [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
   )
   const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
+  const defaultBarMaxLabels = isNarrowViewport ? 4 : 6
   const compactTrafficTrendData = useMemo(
     () =>
       isNarrowViewport
@@ -155,6 +175,11 @@ function Home() {
         : activeSnapshot.charts.costByDay,
     [activeSnapshot.charts.costByDay, isNarrowViewport, mobileBucketCount],
   )
+  const rotateDenseTickLabels =
+    Math.max(trafficBarData.length, compactTokenVolumeData.length, compactCostByDayData.length) > defaultBarMaxLabels
+  const trafficMaxLabels = rotateDenseTickLabels ? trafficBarData.length : defaultBarMaxLabels
+  const tokenMaxLabels = rotateDenseTickLabels ? compactTokenVolumeData.length : defaultBarMaxLabels
+  const costMaxLabels = rotateDenseTickLabels ? compactCostByDayData.length : defaultBarMaxLabels
   const trafficSummaryItems = useMemo(
     () => [
       {
@@ -250,7 +275,7 @@ function Home() {
 
           <Tabs
             className="w-full"
-            onValueChange={(value) => setActiveTab(value as DashboardTab)}
+            onValueChange={(value) => updateSearch({ tab: value as DashboardTab })}
             value={activeTab}
           >
             <TabsList className="dashboard-tabs-list">
@@ -272,7 +297,7 @@ function Home() {
         <div className="toolbar-chip-group">
           <ProjectFilterChip
             availableProjects={snapshot.projects.available}
-            onChange={setSelectedProjectIds}
+            onChange={(projectIds) => updateSearch({ projects: serializeSelectedProjectIds(projectIds, availableProjectIds) })}
             selectedProjectIds={selectedProjectIds}
           />
           <div className="toolbar-chip gap-3">
@@ -280,14 +305,17 @@ function Home() {
             <Select
               onValueChange={(value) => {
                 const preset = value as TimeframePreset
-                setTimeframe((current) => ({
-                  endDay:
-                    current.endDay || projectSnapshot.filters.availableEndDay,
+                const nextTimeframe = {
+                  endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
                   preset,
-                  startDay:
-                    current.startDay ||
-                    projectSnapshot.filters.availableStartDay,
-                }))
+                  startDay: timeframe.startDay || projectSnapshot.filters.availableStartDay,
+                }
+
+                updateSearch({
+                  endDay: preset === 'custom' ? nextTimeframe.endDay : undefined,
+                  preset,
+                  startDay: preset === 'custom' ? nextTimeframe.startDay : undefined,
+                })
               }}
               value={timeframe.preset}
             >
@@ -315,10 +343,11 @@ function Home() {
                 }
                 min={projectSnapshot.filters.availableStartDay}
                 onChange={(event) =>
-                  setTimeframe((current) => ({
-                    ...current,
+                  updateSearch({
+                    endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
+                    preset: 'custom',
                     startDay: event.target.value,
-                  }))
+                  })
                 }
                 type="date"
                 value={
@@ -336,10 +365,11 @@ function Home() {
                   projectSnapshot.filters.availableStartDay
                 }
                 onChange={(event) =>
-                  setTimeframe((current) => ({
-                    ...current,
+                  updateSearch({
                     endDay: event.target.value,
-                  }))
+                    preset: 'custom',
+                    startDay: timeframe.startDay || projectSnapshot.filters.availableStartDay,
+                  })
                 }
                 type="date"
                 value={
@@ -423,7 +453,8 @@ function Home() {
                 <TrafficBars
                   compactLabels={isNarrowViewport}
                   data={trafficBarData}
-                  maxLabels={isNarrowViewport ? 4 : 6}
+                  maxLabels={trafficMaxLabels}
+                  rotateLabels={rotateDenseTickLabels}
                 />
               )}
             </ChartCard>
@@ -611,7 +642,8 @@ function Home() {
               <TokenBars
                 compactLabels={isNarrowViewport}
                 data={compactTokenVolumeData}
-                maxLabels={isNarrowViewport ? 4 : 6}
+                maxLabels={tokenMaxLabels}
+                rotateLabels={rotateDenseTickLabels}
               />
             </ChartCard>
 
@@ -631,7 +663,8 @@ function Home() {
               <CostBars
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
-                maxLabels={isNarrowViewport ? 4 : 6}
+                maxLabels={costMaxLabels}
+                rotateLabels={rotateDenseTickLabels}
               />
             </ChartCard>
           </section>
@@ -690,7 +723,8 @@ function Home() {
                 <TrafficBars
                   compactLabels={isNarrowViewport}
                   data={trafficBarData}
-                  maxLabels={isNarrowViewport ? 4 : 6}
+                  maxLabels={trafficMaxLabels}
+                  rotateLabels={rotateDenseTickLabels}
                 />
               )}
             </ChartCard>
@@ -710,7 +744,8 @@ function Home() {
               <CostBars
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
-                maxLabels={isNarrowViewport ? 4 : 6}
+                maxLabels={costMaxLabels}
+                rotateLabels={rotateDenseTickLabels}
               />
             </ChartCard>
           </section>
@@ -1092,12 +1127,12 @@ function LegendStats({ items }: LegendStatsProps) {
   )
 }
 
-function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBarsProps) {
+function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
   const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
   return (
-    <div className="chart-block chart-block-bars">
+    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-bars-rotated' : 'chart-block chart-block-bars'}>
       {data.map((item, index) => (
         <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
@@ -1117,11 +1152,22 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBars
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span className="chart-label">
-              {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
-            </span>
+            rotateLabels ? (
+              <span className="chart-label chart-label-rotated-slot">
+                <span className="chart-label-rotated-text">
+                  {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+                </span>
+              </span>
+            ) : (
+              <span className="chart-label">
+                {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+              </span>
+            )
           ) : (
-            <span aria-hidden className="chart-label chart-label-placeholder" />
+            <span
+              aria-hidden
+              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder'}
+            />
           )}
         </div>
       ))}
@@ -1207,11 +1253,11 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   )
 }
 
-function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProps) {
+function TokenBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: TokenBarsProps) {
   const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
 
   return (
-    <div className="chart-block chart-block-bars">
+    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-bars-rotated' : 'chart-block chart-block-bars'}>
       {data.map((item, index) => {
         const inputHeight = (item.inputTokens / maxTokens) * 100
         const outputHeight = (item.outputTokens / maxTokens) * 100
@@ -1229,11 +1275,22 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProp
               />
             </div>
             {shouldRenderTick(index, data.length, maxLabels) ? (
-              <span className="chart-label" title={formatBucketLabel(item.day)}>
-                {formatDayShort(item.day, compactLabels)}
-              </span>
+              rotateLabels ? (
+                <span className="chart-label chart-label-rotated-slot" title={formatBucketLabel(item.day)}>
+                  <span className="chart-label-rotated-text">
+                    {formatDayShort(item.day, compactLabels)}
+                  </span>
+                </span>
+              ) : (
+                <span className="chart-label" title={formatBucketLabel(item.day)}>
+                  {formatDayShort(item.day, compactLabels)}
+                </span>
+              )
             ) : (
-              <span aria-hidden className="chart-label chart-label-placeholder" />
+              <span
+                aria-hidden
+                className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder'}
+              />
             )}
           </div>
         )
@@ -1242,11 +1299,11 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProp
   )
 }
 
-function CostBars({ compactLabels = false, data, maxLabels = 6 }: CostBarsProps) {
+function CostBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: CostBarsProps) {
   const maxCost = Math.max(...data.map((item) => item.cost), 1)
 
   return (
-    <div className="chart-block chart-block-bars chart-block-thick">
+    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-thick chart-block-bars-rotated' : 'chart-block chart-block-bars chart-block-thick'}>
       {data.map((item, index) => (
         <div className="bar-group" key={item.day}>
           <div className="bar-stack bar-stack-wide">
@@ -1256,11 +1313,22 @@ function CostBars({ compactLabels = false, data, maxLabels = 6 }: CostBarsProps)
             />
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
-            <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
-              {formatDayShort(item.day, compactLabels)}
-            </span>
+            rotateLabels ? (
+              <span className="chart-label chart-label-rotated-slot" title={formatBucketLabel(item.day)}>
+                <span className="chart-label-rotated-text">
+                  {formatDayShort(item.day, compactLabels)}
+                </span>
+              </span>
+            ) : (
+              <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
+                {formatDayShort(item.day, compactLabels)}
+              </span>
+            )
           ) : (
-            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+            <span
+              aria-hidden
+              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder chart-label-wide'}
+            />
           )}
         </div>
       ))}
@@ -1286,6 +1354,108 @@ function useIsMobileBreakpoint(maxWidth = 640) {
   }, [maxWidth])
 
   return matches
+}
+
+function parseDashboardSearch(search: Record<string, unknown>): DashboardSearch {
+  const tab = getDashboardTabParam(search.tab)
+  const preset = getTimeframePresetParam(search.preset)
+  const startDay = getIsoDayParam(search.startDay)
+  const endDay = getIsoDayParam(search.endDay)
+  const projects = getProjectsParam(search.projects)
+
+  return {
+    endDay,
+    preset,
+    projects,
+    startDay,
+    tab,
+  }
+}
+
+function getSearchBackedTimeframe(search: DashboardSearch, fallback: TimeframeSelection): TimeframeSelection {
+  return {
+    endDay: search.endDay ?? fallback.endDay,
+    preset: search.preset ?? fallback.preset,
+    startDay: search.startDay ?? fallback.startDay,
+  }
+}
+
+function parseSelectedProjectIds(projects: string | undefined, availableProjectIds: string[]) {
+  if (!projects) {
+    return []
+  }
+
+  const selected = projects
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  if (selected.length === 0) {
+    return []
+  }
+
+  const selectedSet = new Set(selected)
+  const ordered = availableProjectIds.filter((projectId) => selectedSet.has(projectId))
+
+  return ordered.length === 0 || ordered.length === availableProjectIds.length ? [] : ordered
+}
+
+function serializeSelectedProjectIds(selectedProjectIds: string[], availableProjectIds: string[]) {
+  if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjectIds.length) {
+    return undefined
+  }
+
+  const selectedSet = new Set(selectedProjectIds)
+  const ordered = availableProjectIds.filter((projectId) => selectedSet.has(projectId))
+
+  return ordered.join(',') || undefined
+}
+
+function sanitizeDashboardSearch(
+  search: DashboardSearch,
+  defaultTimeframe: TimeframeSelection,
+  availableProjectIds: string[],
+): DashboardSearch {
+  const projects = serializeSelectedProjectIds(
+    parseSelectedProjectIds(search.projects, availableProjectIds),
+    availableProjectIds,
+  )
+
+  const normalizedPreset = search.preset ?? defaultTimeframe.preset
+  const startDay = getIsoDayParam(search.startDay)
+  const endDay = getIsoDayParam(search.endDay)
+
+  return {
+    endDay:
+      normalizedPreset === 'custom' && endDay !== defaultTimeframe.endDay
+        ? endDay
+        : undefined,
+    preset: normalizedPreset !== defaultTimeframe.preset ? normalizedPreset : undefined,
+    projects,
+    startDay:
+      normalizedPreset === 'custom' && startDay !== defaultTimeframe.startDay
+        ? startDay
+        : undefined,
+    tab: search.tab && search.tab !== 'overview' ? search.tab : undefined,
+  }
+}
+
+function getDashboardTabParam(value: unknown): DashboardTab | undefined {
+  return value === 'overview' || value === 'models' || value === 'cost' ? value : undefined
+}
+
+function getTimeframePresetParam(value: unknown): TimeframePreset | undefined {
+  return value === '24h' || value === '7d' || value === '30d' || value === '90d' || value === 'custom'
+    ? value
+    : undefined
+}
+
+function getIsoDayParam(value: unknown) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+}
+
+function getProjectsParam(value: unknown) {
+  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
 }
 
 function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
@@ -1468,13 +1638,13 @@ function formatTrafficBucketLabel(startDay: string, endDay: string, compact = fa
     return `${formatter.format(start)}-${formatter.format(end)}`
   }
 
-  const formatter = new Intl.DateTimeFormat('en-US', {
+  return new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
-    minute: compact ? undefined : '2-digit',
     timeZone: DASHBOARD_TIME_ZONE,
   })
-
-  return `${formatter.format(start)}-${formatter.format(end)}`
+    .format(start)
+    .replace(/\s/g, '')
+    .toLowerCase()
 }
 
 function formatRefreshBasisLabel(value: string) {
@@ -1558,6 +1728,14 @@ type ProjectBreakdownCardProps = {
   projects: DashboardProjectSummary[]
 }
 
+type DashboardSearch = {
+  endDay?: string
+  preset?: TimeframePreset
+  projects?: string
+  startDay?: string
+  tab?: DashboardTab
+}
+
 type DashboardTab = 'overview' | 'models' | 'cost'
 
 type ModelUsageBreakdownCardProps = {
@@ -1570,10 +1748,10 @@ type ModelUsageBreakdownCardProps = {
     tokens: number
   }>
 }
-
 type TrafficBarsProps = {
   compactLabels?: boolean
   data: Array<{
+    day: string
     endDay: string
     primary: number
     secondary: number
@@ -1581,6 +1759,7 @@ type TrafficBarsProps = {
     tertiary: number
   }>
   maxLabels?: number
+  rotateLabels?: boolean
 }
 
 type TrafficTrendChartProps = {
@@ -1627,6 +1806,7 @@ type TokenBarsProps = {
     outputTokens: number
   }>
   maxLabels?: number
+  rotateLabels?: boolean
 }
 
 type CostBarsProps = {
@@ -1637,4 +1817,5 @@ type CostBarsProps = {
     missing?: boolean
   }>
   maxLabels?: number
+  rotateLabels?: boolean
 }

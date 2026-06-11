@@ -58,11 +58,15 @@ npm run typecheck
 npm run lint
 npm run build
 npm run cf:d1:migrate:local
+npm run cf:d1:bootstrap:local
 npm run cf:d1:migrate:remote
 npm run deploy
 ```
 
+If a fresh worktree has no local D1 data yet, run `npm run cf:d1:bootstrap:local` before `npm run dev`. It applies local migrations, wipes/reseeds the demo workspaces, and inserts recent daily plus hourly sample data so the dashboard renders immediately.
+
 ## Hermes plugin source
+
 
 The Hermes plugin source lives at:
 
