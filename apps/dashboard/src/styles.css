@@ -575,13 +575,14 @@
 }
 
 .chart-label-rotated {
+  display: inline-block;
   min-height: 5.6rem;
   overflow: visible;
   text-overflow: clip;
   white-space: nowrap;
-  writing-mode: vertical-rl;
-  text-orientation: mixed;
-  transform: rotate(180deg);
+  line-height: 1;
+  transform: rotate(-90deg);
+  transform-origin: center;
 }
 
 .chart-label-rotated.chart-label-wide {
