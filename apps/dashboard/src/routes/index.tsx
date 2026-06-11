@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { ReactNode } from 'react'
 
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { createServerFn } from '@tanstack/react-start'
 import {
   Activity,
@@ -56,19 +56,43 @@ const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(
 )
 
 export const Route = createFileRoute('/')({
+  validateSearch: (search) => parseDashboardSearch(search),
   loader: async () => getDashboardSnapshot(),
   component: Home,
 })
 
 function Home() {
+  const navigate = useNavigate({ from: Route.fullPath })
   const snapshot = Route.useLoaderData()
-  const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
-  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
-  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() =>
-    getInitialTimeframeSelection(snapshot),
+  const search = Route.useSearch()
+  const initialTimeframe = useMemo(
+    () => getInitialTimeframeSelection(snapshot),
+    [snapshot],
   )
-  const [trafficChartMode, setTrafficChartMode] =
-    useState<TrafficChartMode>('bars')
+  const activeTab = search.tab || 'overview'
+  const selectedProjectIds = useMemo(
+    () =>
+      sanitizeSelectedProjectIds(
+        search.projects || '',
+        snapshot.projects.available.map((project) => project.projectId),
+      ),
+    [search.projects, snapshot.projects.available],
+  )
+  const timeframe = useMemo<TimeframeSelection>(
+    () => ({
+      endDay: search.endDay || initialTimeframe.endDay,
+      preset: search.preset || initialTimeframe.preset,
+      startDay: search.startDay || initialTimeframe.startDay,
+    }),
+    [
+      initialTimeframe.endDay,
+      initialTimeframe.preset,
+      initialTimeframe.startDay,
+      search.endDay,
+      search.preset,
+      search.startDay,
+    ],
+  )
   const projectSnapshot = useMemo(
     () => filterSnapshotByProjects(snapshot, selectedProjectIds),
     [selectedProjectIds, snapshot],
@@ -77,6 +101,15 @@ function Home() {
     () => filterSnapshotByTimeframe(projectSnapshot, timeframe),
     [projectSnapshot, timeframe],
   )
+  const updateSearch = (next: Partial<DashboardSearch>) =>
+    navigate({
+      replace: true,
+      search: (current) => ({
+        ...current,
+        ...next,
+      }),
+    })
+  const trafficChartMode = search.mode || 'bars'
   const agentDataStatus = useMemo(
     () =>
       getAgentDataStatus(projectSnapshot.headline.generatedAt, {
@@ -150,7 +183,9 @@ function Home() {
 
           <Tabs
             className="w-full"
-            onValueChange={(value) => setActiveTab(value as DashboardTab)}
+            onValueChange={(value) =>
+              updateSearch({ tab: value as DashboardTab })
+            }
             value={activeTab}
           >
             <TabsList className="dashboard-tabs-list">
@@ -172,7 +207,16 @@ function Home() {
         <div className="toolbar-chip-group">
           <ProjectFilterChip
             availableProjects={snapshot.projects.available}
-            onChange={setSelectedProjectIds}
+            onChange={(projectIds) =>
+              updateSearch({
+                projects: serializeSelectedProjectIds(
+                  projectIds,
+                  snapshot.projects.available.map(
+                    (project) => project.projectId,
+                  ),
+                ),
+              })
+            }
             selectedProjectIds={selectedProjectIds}
           />
           <div className="toolbar-chip gap-3">
@@ -180,14 +224,16 @@ function Home() {
             <Select
               onValueChange={(value) => {
                 const preset = value as TimeframePreset
-                setTimeframe((current) => ({
+                updateSearch({
                   endDay:
-                    current.endDay || projectSnapshot.filters.availableEndDay,
+                    timeframe.endDay || projectSnapshot.filters.availableEndDay,
                   preset,
                   startDay:
-                    current.startDay ||
-                    projectSnapshot.filters.availableStartDay,
-                }))
+                    preset === 'custom'
+                      ? timeframe.startDay ||
+                        projectSnapshot.filters.availableStartDay
+                      : undefined,
+                })
               }}
               value={timeframe.preset}
             >
@@ -216,10 +262,13 @@ function Home() {
                 }
                 min={projectSnapshot.filters.availableStartDay}
                 onChange={(event) =>
-                  setTimeframe((current) => ({
-                    ...current,
+                  updateSearch({
+                    endDay:
+                      timeframe.endDay ||
+                      projectSnapshot.filters.availableEndDay,
+                    preset: 'custom',
                     startDay: event.target.value,
-                  }))
+                  })
                 }
                 type="date"
                 value={
@@ -237,10 +286,13 @@ function Home() {
                   projectSnapshot.filters.availableStartDay
                 }
                 onChange={(event) =>
-                  setTimeframe((current) => ({
-                    ...current,
+                  updateSearch({
                     endDay: event.target.value,
-                  }))
+                    preset: 'custom',
+                    startDay:
+                      timeframe.startDay ||
+                      projectSnapshot.filters.availableStartDay,
+                  })
                 }
                 type="date"
                 value={
@@ -286,7 +338,7 @@ function Home() {
                     <Button
                       aria-pressed={trafficChartMode === 'bars'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('bars')}
+                      onClick={() => updateSearch({ mode: 'bars' })}
                       size="xs"
                       type="button"
                       variant={
@@ -298,7 +350,7 @@ function Home() {
                     <Button
                       aria-pressed={trafficChartMode === 'line'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('line')}
+                      onClick={() => updateSearch({ mode: 'line' })}
                       size="xs"
                       type="button"
                       variant={
@@ -545,7 +597,7 @@ function Home() {
                     <Button
                       aria-pressed={trafficChartMode === 'bars'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('bars')}
+                      onClick={() => updateSearch({ mode: 'bars' })}
                       size="xs"
                       type="button"
                       variant={
@@ -557,7 +609,7 @@ function Home() {
                     <Button
                       aria-pressed={trafficChartMode === 'line'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('line')}
+                      onClick={() => updateSearch({ mode: 'line' })}
                       size="xs"
                       type="button"
                       variant={
@@ -1158,6 +1210,84 @@ function getInitialTimeframeSelection(
   }
 }
 
+function parseDashboardSearch(
+  search: Record<string, unknown>,
+): DashboardSearch {
+  return {
+    endDay: asIsoDay(search.endDay),
+    mode: asTrafficChartMode(search.mode),
+    preset: asTimeframePreset(search.preset),
+    projects: typeof search.projects === 'string' ? search.projects : undefined,
+    startDay: asIsoDay(search.startDay),
+    tab: asDashboardTab(search.tab),
+  }
+}
+
+function asDashboardTab(value: unknown): DashboardTab | undefined {
+  return value === 'models' || value === 'cost' || value === 'overview'
+    ? value
+    : undefined
+}
+
+function asTimeframePreset(value: unknown): TimeframePreset | undefined {
+  return value === '24h' ||
+    value === '7d' ||
+    value === '30d' ||
+    value === '90d' ||
+    value === 'custom'
+    ? value
+    : undefined
+}
+
+function asTrafficChartMode(value: unknown): TrafficChartMode | undefined {
+  return value === 'bars' || value === 'line' ? value : undefined
+}
+
+function asIsoDay(value: unknown) {
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value
+    : undefined
+}
+
+function sanitizeSelectedProjectIds(
+  value: string,
+  availableProjectIds: string[],
+) {
+  if (!value) {
+    return []
+  }
+
+  const availableProjectIdSet = new Set(availableProjectIds)
+  const selectedProjectIds = value
+    .split(',')
+    .map((projectId) => projectId.trim())
+    .filter((projectId) => projectId && availableProjectIdSet.has(projectId))
+
+  return [...new Set(selectedProjectIds)]
+}
+
+function serializeSelectedProjectIds(
+  selectedProjectIds: string[],
+  availableProjectIds: string[],
+) {
+  if (
+    selectedProjectIds.length === 0 ||
+    selectedProjectIds.length === availableProjectIds.length
+  ) {
+    return undefined
+  }
+
+  const availableProjectIdSet = new Set(availableProjectIds)
+  const orderedProjectIds = availableProjectIds.filter((projectId) =>
+    selectedProjectIds.includes(projectId),
+  )
+  const serialized = orderedProjectIds
+    .filter((projectId) => availableProjectIdSet.has(projectId))
+    .join(',')
+
+  return serialized || undefined
+}
+
 function formatCompact(value: number) {
   return new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 1,
@@ -1282,6 +1412,15 @@ type ProjectBreakdownCardProps = {
 }
 
 type DashboardTab = 'overview' | 'models' | 'cost'
+
+type DashboardSearch = {
+  endDay?: string
+  mode?: TrafficChartMode
+  preset?: TimeframePreset
+  projects?: string
+  startDay?: string
+  tab?: DashboardTab
+}
 
 type ModelUsageBreakdownCardProps = {
   models: Array<{
