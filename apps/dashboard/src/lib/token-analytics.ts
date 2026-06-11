@@ -19,6 +19,7 @@ export type DashboardDailyRow = DashboardProjectOption & {
   cachedTokens: number
   cost: number
   day: string
+  hasData?: boolean
   inputTokens: number
   outputTokens: number
   requests: number
@@ -55,6 +56,8 @@ export type DashboardModelDailyUsage = DashboardProjectOption & {
 
 type SnapshotBuildInput = {
   availableProjects?: DashboardProjectOption[]
+  bucketWindowEnd?: string
+  bucketWindowStart?: string
   dailyRows: DashboardDailyRow[]
   environment: string
   generatedAt: string
@@ -81,7 +84,11 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const aggregatedDailyRows =
     granularity === 'hour'
       ? fillMissingHourlyBuckets(summarizeRowsByBucket(input.dailyRows), input.generatedAt)
-      : summarizeRowsByBucket(input.dailyRows)
+      : fillMissingDailyBuckets(
+          summarizeRowsByBucket(input.dailyRows),
+          input.bucketWindowStart,
+          input.bucketWindowEnd,
+        )
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
       accumulator.cachedTokens += row.cachedTokens
@@ -138,15 +145,18 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       costByDay: aggregatedDailyRows.map((row) => ({
         cost: row.cost,
         day: row.day,
+        missing: row.hasData === false,
       })),
       inputOutput: aggregatedDailyRows.map((row) => ({
         day: row.day,
+        missing: row.hasData === false,
         primary: resolveTotalInputTokens(row),
         secondary: row.outputTokens,
       })),
       models: modelRows,
       requestsCostCache: aggregatedDailyRows.map((row) => ({
         day: row.day,
+        missing: row.hasData === false,
         primary: row.requests,
         secondary: Math.round(row.cost * 10),
         tertiary: Math.round(calculateCachedShare(row) * 100),
@@ -154,6 +164,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       tokenVolume: aggregatedDailyRows.map((row) => ({
         day: row.day,
         inputTokens: resolveTotalInputTokens(row),
+        missing: row.hasData === false,
         outputTokens: row.outputTokens,
       })),
     },
@@ -230,6 +241,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       cachedShare: calculateCachedShare(row),
       cost: row.cost,
       day: row.day,
+      hasData: row.hasData !== false,
       inputTokens: resolveTotalInputTokens(row),
       outputTokens: row.outputTokens,
       requests: row.requests,
@@ -413,6 +425,7 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
       current.outputTokens += row.outputTokens
       current.requests += row.requests
       current.totalTokens += row.totalTokens
+      current.hasData = current.hasData !== false || row.hasData !== false
       continue
     }
 
@@ -421,6 +434,7 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
       cachedTokens: row.cachedTokens,
       cost: row.cost,
       day: row.day,
+      hasData: row.hasData !== false,
       inputTokens: row.inputTokens,
       outputTokens: row.outputTokens,
       requests: row.requests,
@@ -429,6 +443,51 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   }
 
   return [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
+}
+
+function fillMissingDailyBuckets(rows: DashboardDailyRow[], windowStart?: string, windowEnd?: string) {
+  if (rows.length === 0) {
+    return rows
+  }
+
+  const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
+  const startDay = windowStart || sortedRows[0]?.day
+  const endDay = windowEnd || sortedRows.at(-1)?.day
+
+  if (!startDay || !endDay || startDay > endDay) {
+    return sortedRows
+  }
+
+  const rowMap = new Map(sortedRows.map((row) => [row.day, row]))
+  const filledRows: DashboardDailyRow[] = []
+
+  for (let day = startDay; day <= endDay; day = addDays(day, 1)) {
+    const existing = rowMap.get(day)
+    if (existing) {
+      filledRows.push(existing)
+      continue
+    }
+
+    filledRows.push({
+      ...EMPTY_PROJECT,
+      cachedTokens: 0,
+      cost: 0,
+      day,
+      hasData: false,
+      inputTokens: 0,
+      outputTokens: 0,
+      requests: 0,
+      totalTokens: 0,
+    })
+  }
+
+  return filledRows
+}
+
+function addDays(day: string, days: number) {
+  const next = new Date(`${day}T00:00:00Z`)
+  next.setUTCDate(next.getUTCDate() + days)
+  return next.toISOString().slice(0, 10)
 }
 
 function fillMissingHourlyBuckets(rows: DashboardDailyRow[], generatedAt?: string) {
@@ -623,9 +682,11 @@ export type DashboardSnapshot = {
     costByDay: Array<{
       cost: number
       day: string
+      missing?: boolean
     }>
     inputOutput: Array<{
       day: string
+      missing?: boolean
       primary: number
       secondary: number
     }>
@@ -639,6 +700,7 @@ export type DashboardSnapshot = {
     }>
     requestsCostCache: Array<{
       day: string
+      missing?: boolean
       primary: number
       secondary: number
       tertiary: number
@@ -646,6 +708,7 @@ export type DashboardSnapshot = {
     tokenVolume: Array<{
       day: string
       inputTokens: number
+      missing?: boolean
       outputTokens: number
     }>
   }
@@ -684,6 +747,7 @@ export type DashboardSnapshot = {
     cachedShare: number
     cost: number
     day: string
+    hasData?: boolean
     inputTokens: number
     outputTokens: number
     requests: number

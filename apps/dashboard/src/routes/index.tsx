@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { createFileRoute } from '@tanstack/react-router'
@@ -32,7 +32,11 @@ import {
   TableRow,
 } from '#/components/ui/table'
 import { Tabs, TabsList, TabsTrigger } from '#/components/ui/tabs'
-import { aggregateTrafficChartPoints } from '#/lib/chart-presentation'
+import {
+  aggregateDualMetricChartPoints,
+  aggregateSingleMetricChartPoints,
+  aggregateTrafficChartPoints,
+} from '#/lib/chart-presentation'
 import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
@@ -64,19 +68,11 @@ function Home() {
   const snapshot = Route.useLoaderData()
   const [activeTab, setActiveTab] = useState<DashboardTab>('overview')
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([])
-  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() =>
-    getInitialTimeframeSelection(snapshot),
-  )
-  const [trafficChartMode, setTrafficChartMode] =
-    useState<TrafficChartMode>('bars')
-  const projectSnapshot = useMemo(
-    () => filterSnapshotByProjects(snapshot, selectedProjectIds),
-    [selectedProjectIds, snapshot],
-  )
-  const activeSnapshot = useMemo(
-    () => filterSnapshotByTimeframe(projectSnapshot, timeframe),
-    [projectSnapshot, timeframe],
-  )
+  const [timeframe, setTimeframe] = useState<TimeframeSelection>(() => getInitialTimeframeSelection(snapshot))
+  const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
+  const isNarrowViewport = useIsMobileBreakpoint()
+  const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
+  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
   const agentDataStatus = useMemo(
     () =>
       getAgentDataStatus(projectSnapshot.headline.generatedAt, {
@@ -111,6 +107,110 @@ function Home() {
             startDay: item.day,
           })),
     [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
+  )
+  const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
+  const compactTrafficTrendData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateTrafficChartPoints(activeSnapshot.charts.requestsCostCache, mobileBucketCount)
+        : activeSnapshot.charts.requestsCostCache.map((item) => ({
+            ...item,
+            endDay: item.day,
+            startDay: item.day,
+          })),
+    [activeSnapshot.charts.requestsCostCache, isNarrowViewport, mobileBucketCount],
+  )
+  const compactInputOutputData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateDualMetricChartPoints(activeSnapshot.charts.inputOutput, mobileBucketCount)
+        : activeSnapshot.charts.inputOutput,
+    [activeSnapshot.charts.inputOutput, isNarrowViewport, mobileBucketCount],
+  )
+  const compactTokenVolumeData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateDualMetricChartPoints(
+            activeSnapshot.charts.tokenVolume.map((item) => ({
+              day: item.day,
+              primary: item.inputTokens,
+              secondary: item.outputTokens,
+            })),
+            mobileBucketCount,
+          ).map((item) => ({
+            day: item.day,
+            inputTokens: item.primary,
+            outputTokens: item.secondary,
+          }))
+        : activeSnapshot.charts.tokenVolume,
+    [activeSnapshot.charts.tokenVolume, isNarrowViewport, mobileBucketCount],
+  )
+  const compactCostByDayData = useMemo(
+    () =>
+      isNarrowViewport
+        ? aggregateSingleMetricChartPoints(
+            activeSnapshot.charts.costByDay.map((item) => ({ day: item.day, value: item.cost })),
+            mobileBucketCount,
+          ).map((item) => ({ day: item.day, cost: item.value }))
+        : activeSnapshot.charts.costByDay,
+    [activeSnapshot.charts.costByDay, isNarrowViewport, mobileBucketCount],
+  )
+  const trafficSummaryItems = useMemo(
+    () => [
+      {
+        accent: 'var(--chart-grey)',
+        key: 'traffic-requests',
+        label: 'Requests',
+        value: activeSnapshot.charts.requestsCostCache.reduce((sum, item) => sum + item.primary, 0).toLocaleString('en-US'),
+      },
+      {
+        accent: 'var(--chart-red)',
+        key: 'traffic-cost',
+        label: 'Allocated cost',
+        value: formatCurrency(activeSnapshot.charts.requestsCostCache.reduce((sum, item) => sum + item.secondary, 0) / 10),
+      },
+      {
+        accent: 'var(--chart-violet)',
+        key: 'traffic-cache',
+        label: 'Avg cached',
+        value: `${calculateAverageTrafficCacheShare(activeSnapshot.charts.requestsCostCache).toFixed(0)}%`,
+      },
+    ],
+    [activeSnapshot.charts.requestsCostCache],
+  )
+  const inputOutputSummaryItems = useMemo(
+    () => [
+      {
+        accent: 'var(--chart-violet)',
+        key: 'input-total',
+        label: 'Input tokens',
+        value: formatCompact(activeSnapshot.charts.inputOutput.reduce((sum, item) => sum + item.primary, 0)),
+      },
+      {
+        accent: 'var(--chart-ink)',
+        key: 'output-total',
+        label: 'Output tokens',
+        value: formatCompact(activeSnapshot.charts.inputOutput.reduce((sum, item) => sum + item.secondary, 0)),
+      },
+    ],
+    [activeSnapshot.charts.inputOutput],
+  )
+  const costSummaryItems = useMemo(
+    () => [
+      {
+        accent: 'var(--chart-magenta)',
+        key: 'cost-total',
+        label: 'Total cost',
+        value: formatCurrency(activeSnapshot.charts.costByDay.reduce((sum, item) => sum + item.cost, 0)),
+      },
+      {
+        accent: 'var(--chart-magenta)',
+        key: 'cost-peak',
+        label: 'Peak bucket',
+        value: formatCurrency(Math.max(...activeSnapshot.charts.costByDay.map((item) => item.cost), 0)),
+      },
+    ],
+    [activeSnapshot.charts.costByDay],
   )
 
   return (
@@ -192,10 +292,9 @@ function Home() {
               value={timeframe.preset}
             >
               <SelectTrigger className="h-8 w-[148px] border-0 bg-transparent px-0 text-left text-sm font-medium text-slate-700 shadow-none focus:ring-0">
-                <SelectValue
-                  aria-label="Timeframe"
-                  placeholder="Select window"
-                />
+                <SelectValue aria-label="Timeframe">
+                  {getTimeframeTriggerLabel(projectSnapshot, timeframe)}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent align="end">
                 <SelectItem value="24h">Last 24 hours</SelectItem>
@@ -310,6 +409,7 @@ function Home() {
                   </div>
                 ) : null
               }
+              footer={isNarrowViewport ? <LegendStats items={trafficSummaryItems} /> : undefined}
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -318,26 +418,25 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart
-                  data={activeSnapshot.charts.requestsCostCache}
-                  title="Requests, cost, and cache trends"
-                />
+                <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
               ) : (
-                <TrafficBars data={trafficBarData} />
+                <TrafficBars
+                  compactLabels={isNarrowViewport}
+                  data={trafficBarData}
+                  maxLabels={isNarrowViewport ? 4 : 6}
+                />
               )}
             </ChartCard>
 
             <ChartCard
+              footer={isNarrowViewport ? <LegendStats items={inputOutputSummaryItems} /> : undefined}
               legend={[
                 { label: 'Input tokens', color: 'var(--chart-violet)' },
                 { label: 'Output tokens', color: 'var(--chart-ink)' },
               ]}
               title="Input vs output"
             >
-              <LineChart
-                data={activeSnapshot.charts.inputOutput}
-                title="Input and output tokens"
-              />
+              <LineChart data={compactInputOutputData} title="Input and output tokens" />
             </ChartCard>
 
             <Card className="panel-card panel-card-signals">
@@ -346,8 +445,8 @@ function Home() {
                   <CardTitle className="panel-title">Signals</CardTitle>
                 </div>
               </CardHeader>
-              <CardContent className="p-0">
-                <div className="issue-list">
+              <CardContent className="issue-list-shell p-0">
+                <div className="issue-list issue-list-scroll">
                   {activeSnapshot.issues.map((issue) => (
                     <div
                       className="issue-row"
@@ -509,7 +608,11 @@ function Home() {
               }
               title="Token volume"
             >
-              <TokenBars data={activeSnapshot.charts.tokenVolume} />
+              <TokenBars
+                compactLabels={isNarrowViewport}
+                data={compactTokenVolumeData}
+                maxLabels={isNarrowViewport ? 4 : 6}
+              />
             </ChartCard>
 
             <ChartCard
@@ -525,7 +628,11 @@ function Home() {
               }
               title={costChartTitle}
             >
-              <CostBars data={activeSnapshot.charts.costByDay} />
+              <CostBars
+                compactLabels={isNarrowViewport}
+                data={compactCostByDayData}
+                maxLabels={isNarrowViewport ? 4 : 6}
+              />
             </ChartCard>
           </section>
         </div>
@@ -569,6 +676,7 @@ function Home() {
                   </div>
                 ) : null
               }
+              footer={isNarrowViewport ? <LegendStats items={trafficSummaryItems} /> : undefined}
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -577,30 +685,33 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart
-                  data={activeSnapshot.charts.requestsCostCache}
-                  title="Requests, cost, and cache trends"
-                />
+                <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
               ) : (
-                <TrafficBars data={trafficBarData} />
+                <TrafficBars
+                  compactLabels={isNarrowViewport}
+                  data={trafficBarData}
+                  maxLabels={isNarrowViewport ? 4 : 6}
+                />
               )}
             </ChartCard>
 
             <ChartCard
+              footer={isNarrowViewport ? <LegendStats items={inputOutputSummaryItems} /> : undefined}
               legend={[
                 { label: 'Input tokens', color: 'var(--chart-violet)' },
                 { label: 'Output tokens', color: 'var(--chart-ink)' },
               ]}
               title="Input vs output"
             >
-              <LineChart
-                data={activeSnapshot.charts.inputOutput}
-                title="Input and output tokens"
-              />
+              <LineChart data={compactInputOutputData} title="Input and output tokens" />
             </ChartCard>
 
-            <ChartCard title={costChartTitle}>
-              <CostBars data={activeSnapshot.charts.costByDay} />
+            <ChartCard footer={isNarrowViewport ? <LegendStats items={costSummaryItems} /> : undefined} title={costChartTitle}>
+              <CostBars
+                compactLabels={isNarrowViewport}
+                data={compactCostByDayData}
+                maxLabels={isNarrowViewport ? 4 : 6}
+              />
             </ChartCard>
           </section>
 
@@ -981,13 +1092,13 @@ function LegendStats({ items }: LegendStatsProps) {
   )
 }
 
-function TrafficBars({ data }: TrafficBarsProps) {
+function TrafficBars({ compactLabels = false, data, maxLabels = 6 }: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
   const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
   return (
     <div className="chart-block chart-block-bars">
-      {data.map((item) => (
+      {data.map((item, index) => (
         <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
             <span
@@ -1005,9 +1116,13 @@ function TrafficBars({ data }: TrafficBarsProps) {
               style={{ height: `${Math.max(item.tertiary, 8)}%` }}
             />
           </div>
-          <span className="chart-label">
-            {formatTrafficBucketLabel(item.startDay, item.endDay)}
-          </span>
+          {shouldRenderTick(index, data.length, maxLabels) ? (
+            <span className="chart-label">
+              {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+            </span>
+          ) : (
+            <span aria-hidden className="chart-label chart-label-placeholder" />
+          )}
         </div>
       ))}
     </div>
@@ -1015,9 +1130,9 @@ function TrafficBars({ data }: TrafficBarsProps) {
 }
 
 function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
-  const requestPoints = toPolylinePoints(data.map((item) => item.primary))
-  const costPoints = toPolylinePoints(data.map((item) => item.secondary))
-  const cachePoints = toPolylinePoints(data.map((item) => item.tertiary))
+  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
+  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
+  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })))
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1025,16 +1140,22 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
       <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
       <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
       <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
-      <polyline className="chart-line chart-line-grey" points={requestPoints} />
-      <polyline className="chart-line chart-line-red" points={costPoints} />
-      <polyline className="chart-line chart-line-muted" points={cachePoints} />
+      {requestSegments.map((points, index) => (
+        <polyline className="chart-line chart-line-grey" key={`requests-${index}`} points={points} />
+      ))}
+      {costSegments.map((points, index) => (
+        <polyline className="chart-line chart-line-red" key={`cost-${index}`} points={points} />
+      ))}
+      {cacheSegments.map((points, index) => (
+        <polyline className="chart-line chart-line-muted" key={`cache-${index}`} points={points} />
+      ))}
     </svg>
   )
 }
 
 function LineChart({ data, title }: LineChartProps) {
-  const primary = toPolylinePoints(data.map((item) => item.primary))
-  const secondary = toPolylinePoints(data.map((item) => item.secondary))
+  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
+  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1042,8 +1163,12 @@ function LineChart({ data, title }: LineChartProps) {
       <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
       <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
       <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
-      <polyline className="chart-line chart-line-muted" points={primary} />
-      <polyline className="chart-line" points={secondary} />
+      {primarySegments.map((points, index) => (
+        <polyline className="chart-line chart-line-muted" key={`primary-${index}`} points={points} />
+      ))}
+      {secondarySegments.map((points, index) => (
+        <polyline className="chart-line" key={`secondary-${index}`} points={points} />
+      ))}
     </svg>
   )
 }
@@ -1053,10 +1178,12 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
 
   return (
     <div className="chart-block chart-block-bars chart-block-thick">
-      {data.map((item) => (
+      {data.map((item, index) => (
         <div
+          aria-label={`${item.model}: ${item[valueKey].toLocaleString('en-US')}`}
           className="bar-group"
           key={`${item.provider}:${item.model}:${valueKey}`}
+          title={item.model}
         >
           <div className="bar-stack bar-stack-wide">
             <span
@@ -1067,24 +1194,25 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
               }}
             />
           </div>
-          <span className="chart-label chart-label-wide">
-            {formatModelLabel(item.model, item.provider)}
-          </span>
+          {shouldRenderTick(index, data.length, 4) ? (
+            <span className="chart-label chart-label-wide" title={formatModelLabel(item.model, item.provider)}>
+              {formatModelTick(item.model)}
+            </span>
+          ) : (
+            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+          )}
         </div>
       ))}
     </div>
   )
 }
 
-function TokenBars({ data }: TokenBarsProps) {
-  const maxTokens = Math.max(
-    ...data.map((item) => item.inputTokens + item.outputTokens),
-    1,
-  )
+function TokenBars({ compactLabels = false, data, maxLabels = 6 }: TokenBarsProps) {
+  const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
 
   return (
     <div className="chart-block chart-block-bars">
-      {data.map((item) => {
+      {data.map((item, index) => {
         const inputHeight = (item.inputTokens / maxTokens) * 100
         const outputHeight = (item.outputTokens / maxTokens) * 100
 
@@ -1100,7 +1228,13 @@ function TokenBars({ data }: TokenBarsProps) {
                 style={{ height: `${outputHeight}%` }}
               />
             </div>
-            <span className="chart-label">{formatDayShort(item.day)}</span>
+            {shouldRenderTick(index, data.length, maxLabels) ? (
+              <span className="chart-label" title={formatBucketLabel(item.day)}>
+                {formatDayShort(item.day, compactLabels)}
+              </span>
+            ) : (
+              <span aria-hidden className="chart-label chart-label-placeholder" />
+            )}
           </div>
         )
       })}
@@ -1108,12 +1242,12 @@ function TokenBars({ data }: TokenBarsProps) {
   )
 }
 
-function CostBars({ data }: CostBarsProps) {
+function CostBars({ compactLabels = false, data, maxLabels = 6 }: CostBarsProps) {
   const maxCost = Math.max(...data.map((item) => item.cost), 1)
 
   return (
     <div className="chart-block chart-block-bars chart-block-thick">
-      {data.map((item) => (
+      {data.map((item, index) => (
         <div className="bar-group" key={item.day}>
           <div className="bar-stack bar-stack-wide">
             <span
@@ -1121,18 +1255,40 @@ function CostBars({ data }: CostBarsProps) {
               style={{ height: `${(item.cost / maxCost) * 100}%` }}
             />
           </div>
-          <span className="chart-label chart-label-wide">
-            {formatDayShort(item.day)}
-          </span>
+          {shouldRenderTick(index, data.length, maxLabels) ? (
+            <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
+              {formatDayShort(item.day, compactLabels)}
+            </span>
+          ) : (
+            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+          )}
         </div>
       ))}
     </div>
   )
 }
 
-function getInitialTimeframeSelection(
-  snapshot: DashboardSnapshot,
-): TimeframeSelection {
+function useIsMobileBreakpoint(maxWidth = 640) {
+  const [matches, setMatches] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+      return undefined
+    }
+
+    const mediaQuery = window.matchMedia(`(max-width: ${maxWidth}px)`)
+    const update = () => setMatches(mediaQuery.matches)
+
+    update()
+    mediaQuery.addEventListener('change', update)
+
+    return () => mediaQuery.removeEventListener('change', update)
+  }, [maxWidth])
+
+  return matches
+}
+
+function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
   const dayCount = snapshot.filters.dailyRows.length
 
   if (dayCount <= 1) {
@@ -1158,11 +1314,90 @@ function getInitialTimeframeSelection(
   }
 }
 
+function getTimeframeTriggerLabel(snapshot: DashboardSnapshot, selection: TimeframeSelection) {
+  if (selection.preset === 'custom') {
+    return 'Custom range'
+  }
+
+  const availableDayCount = snapshot.filters.dailyRows.length
+  const requestedDayCount =
+    selection.preset === '24h'
+      ? 1
+      : selection.preset === '7d'
+        ? 7
+        : selection.preset === '30d'
+          ? 30
+          : 90
+
+  if (availableDayCount < requestedDayCount) {
+    return formatCompactDateRange(
+      snapshot.filters.availableStartDay,
+      snapshot.filters.availableEndDay,
+    )
+  }
+
+  return selection.preset === '24h'
+    ? 'Last 24 hours'
+    : selection.preset === '7d'
+      ? 'Last 7 days'
+      : selection.preset === '30d'
+        ? 'Last 30 days'
+        : 'Last 90 days'
+}
+
+function formatCompactDateRange(startDay: string, endDay: string) {
+  if (!startDay || !endDay) {
+    return 'Select window'
+  }
+
+  if (startDay === endDay) {
+    return formatShortToolbarDay(startDay)
+  }
+
+  const start = new Date(`${startDay}T00:00:00Z`)
+  const end = new Date(`${endDay}T00:00:00Z`)
+  const sameMonth =
+    start.getUTCFullYear() === end.getUTCFullYear() &&
+    start.getUTCMonth() === end.getUTCMonth()
+
+  if (sameMonth) {
+    return `${formatShortToolbarMonthDay(start)}–${end.getUTCDate()}`
+  }
+
+  return `${formatShortToolbarMonthDay(start)}–${formatShortToolbarMonthDay(end)}`
+}
+
+function formatShortToolbarDay(value: string) {
+  return formatShortToolbarMonthDay(new Date(`${value}T00:00:00Z`))
+}
+
+function formatShortToolbarMonthDay(value: Date) {
+  return new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(value)
+}
+
 function formatCompact(value: number) {
   return new Intl.NumberFormat('en-US', {
     maximumFractionDigits: 1,
     notation: 'compact',
   }).format(value)
+}
+
+function calculateAverageTrafficCacheShare(data: Array<{ primary: number; tertiary: number }>) {
+  if (data.length === 0) {
+    return 0
+  }
+
+  const totalRequests = data.reduce((sum, item) => sum + item.primary, 0)
+
+  if (totalRequests > 0) {
+    return data.reduce((sum, item) => sum + item.primary * item.tertiary, 0) / totalRequests
+  }
+
+  return data.reduce((sum, item) => sum + item.tertiary, 0) / data.length
 }
 
 function formatCurrency(value: number) {
@@ -1171,6 +1406,13 @@ function formatCurrency(value: number) {
 
 function formatModelLabel(model: string, provider: string) {
   return provider ? `${provider} · ${model}` : model
+}
+
+function formatModelTick(model: string) {
+  const trimmed = model.trim()
+  const slashSegment = trimmed.split('/').pop() ?? trimmed
+  const colonSegment = slashSegment.split(':').pop() ?? slashSegment
+  return colonSegment
 }
 
 function formatBucketLabel(value: string) {
@@ -1187,32 +1429,52 @@ function formatBucketLabel(value: string) {
   }).format(date)
 }
 
-function formatDayShort(value: string) {
+function formatDayShort(value: string, compact = false) {
   const isTimestamp = value.includes('T')
   const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
 
   return new Intl.DateTimeFormat('en-US', {
-    day: isTimestamp ? undefined : 'numeric',
+    day: compact || !isTimestamp ? 'numeric' : undefined,
     hour: isTimestamp ? 'numeric' : undefined,
-    minute: isTimestamp ? '2-digit' : undefined,
-    month: isTimestamp ? undefined : 'short',
+    minute: isTimestamp && !compact ? '2-digit' : undefined,
+    month: compact ? 'numeric' : isTimestamp ? undefined : 'short',
     timeZone: isTimestamp ? DASHBOARD_TIME_ZONE : 'UTC',
   }).format(date)
 }
 
-function formatTrafficBucketLabel(startDay: string, endDay: string) {
+function shouldRenderTick(index: number, total: number, maxLabels = 6) {
+  if (total <= maxLabels) return true
+  if (index === 0 || index === total - 1) return true
+
+  const stride = Math.max(1, Math.ceil((total - 1) / (maxLabels - 1)))
+  return index % stride === 0
+}
+
+function formatTrafficBucketLabel(startDay: string, endDay: string, compact = false) {
   if (startDay === endDay) {
-    return formatDayShort(startDay)
+    return formatDayShort(startDay, compact)
   }
 
   const start = new Date(startDay)
   const end = new Date(endDay)
+
+  if (!startDay.includes('T') && !endDay.includes('T')) {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      day: 'numeric',
+      month: compact ? 'numeric' : 'short',
+      timeZone: 'UTC',
+    })
+
+    return `${formatter.format(start)}-${formatter.format(end)}`
+  }
+
   const formatter = new Intl.DateTimeFormat('en-US', {
     hour: 'numeric',
+    minute: compact ? undefined : '2-digit',
     timeZone: DASHBOARD_TIME_ZONE,
   })
 
-  return `${formatter.format(start)}–${formatter.format(end)}`
+  return `${formatter.format(start)}-${formatter.format(end)}`
 }
 
 function formatRefreshBasisLabel(value: string) {
@@ -1226,16 +1488,31 @@ function formatRefreshBasisLabel(value: string) {
   }).format(new Date(value))
 }
 
-function toPolylinePoints(values: number[]) {
-  const maxValue = Math.max(...values, 1)
+function toPolylineSegments(points: Array<{ missing?: boolean; value: number }>) {
+  const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
+  const maxValue = Math.max(...presentValues, 1)
+  const segments: string[] = []
+  let currentSegment: string[] = []
 
-  return values
-    .map((value, index) => {
-      const x = 16 + index * (288 / Math.max(values.length - 1, 1))
-      const y = 130 - (value / maxValue) * 112
-      return `${x},${y}`
-    })
-    .join(' ')
+  points.forEach((point, index) => {
+    if (point.missing) {
+      if (currentSegment.length >= 2) {
+        segments.push(currentSegment.join(' '))
+      }
+      currentSegment = []
+      return
+    }
+
+    const x = 16 + index * (288 / Math.max(points.length - 1, 1))
+    const y = 130 - (point.value / maxValue) * 112
+    currentSegment.push(`${x},${y}`)
+  })
+
+  if (currentSegment.length >= 2) {
+    segments.push(currentSegment.join(' '))
+  }
+
+  return segments
 }
 
 const toneClassNameMap = {
@@ -1295,6 +1572,7 @@ type ModelUsageBreakdownCardProps = {
 }
 
 type TrafficBarsProps = {
+  compactLabels?: boolean
   data: Array<{
     endDay: string
     primary: number
@@ -1302,11 +1580,13 @@ type TrafficBarsProps = {
     startDay: string
     tertiary: number
   }>
+  maxLabels?: number
 }
 
 type TrafficTrendChartProps = {
   data: Array<{
     day: string
+    missing?: boolean
     primary: number
     secondary: number
     tertiary: number
@@ -1319,6 +1599,7 @@ type TrafficChartMode = 'bars' | 'line'
 type LineChartProps = {
   data: Array<{
     day: string
+    missing?: boolean
     primary: number
     secondary: number
   }>
@@ -1338,16 +1619,22 @@ type ModelBarsProps = {
 }
 
 type TokenBarsProps = {
+  compactLabels?: boolean
   data: Array<{
     day: string
     inputTokens: number
+    missing?: boolean
     outputTokens: number
   }>
+  maxLabels?: number
 }
 
 type CostBarsProps = {
+  compactLabels?: boolean
   data: Array<{
     cost: number
     day: string
+    missing?: boolean
   }>
+  maxLabels?: number
 }
