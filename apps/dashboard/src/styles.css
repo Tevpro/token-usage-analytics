@@ -158,6 +158,13 @@
     padding-bottom: 8px;
   }
 
+  .issue-list-scroll-mobile {
+    max-height: min(22rem, 60vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .issue-row {
     align-items: flex-start;
     flex-direction: column;

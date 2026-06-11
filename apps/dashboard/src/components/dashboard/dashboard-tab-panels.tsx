@@ -183,14 +183,14 @@ variant="cost"
 
 function SignalsCard({ issues }: { issues: DashboardSnapshot['issues'] }) {
 return (
-<Card className="panel-card panel-card-signals">
+<Card className="panel-card panel-card-signals overflow-hidden">
 <CardHeader className="panel-header-row">
 <div>
 <CardTitle className="panel-title">Signals</CardTitle>
 </div>
 </CardHeader>
 <CardContent className="p-0">
-<div className="issue-list">
+<div className="issue-list issue-list-scroll-mobile">
 {issues.map((issue) => (
 <div className="issue-row" key={`${issue.severity}:${issue.title}`}>
 <div className="flex min-w-0 items-center gap-3">
