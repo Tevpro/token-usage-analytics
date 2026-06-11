@@ -109,16 +109,7 @@ function Home() {
     [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
   )
   const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
-  const rotateDailyTickLabels =
-    activeSnapshot.headline.granularity === 'day' &&
-    timeframe.preset === '7d' &&
-    activeSnapshot.table.length >= 7
-  const trafficMaxLabels =
-    rotateDailyTickLabels ? activeSnapshot.charts.requestsCostCache.length : isNarrowViewport ? 4 : 6
-  const tokenMaxLabels =
-    rotateDailyTickLabels ? activeSnapshot.charts.tokenVolume.length : isNarrowViewport ? 4 : 6
-  const costMaxLabels =
-    rotateDailyTickLabels ? activeSnapshot.charts.costByDay.length : isNarrowViewport ? 4 : 6
+  const defaultBarMaxLabels = isNarrowViewport ? 4 : 6
   const compactTrafficTrendData = useMemo(
     () =>
       isNarrowViewport
@@ -165,6 +156,12 @@ function Home() {
         : activeSnapshot.charts.costByDay,
     [activeSnapshot.charts.costByDay, isNarrowViewport, mobileBucketCount],
   )
+  const rotateDailyTickLabels =
+    activeSnapshot.headline.granularity === 'day' &&
+    Math.max(trafficBarData.length, compactTokenVolumeData.length, compactCostByDayData.length) > defaultBarMaxLabels
+  const trafficMaxLabels = rotateDailyTickLabels ? trafficBarData.length : defaultBarMaxLabels
+  const tokenMaxLabels = rotateDailyTickLabels ? compactTokenVolumeData.length : defaultBarMaxLabels
+  const costMaxLabels = rotateDailyTickLabels ? compactCostByDayData.length : defaultBarMaxLabels
   const trafficSummaryItems = useMemo(
     () => [
       {
