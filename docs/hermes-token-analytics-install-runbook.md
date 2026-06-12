@@ -6,6 +6,8 @@ Use this when you need to install the Hermes token analytics plugin into a Herme
 
 The key operational rule is simple:
 
+Use the same secret env var name on both sides: `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`.
+
 - install and enable the plugin once
 - configure the Worker secret and plugin env vars
 - validate with `doctor`, `show-config`, and one manual `sync`
@@ -35,8 +37,8 @@ Before you start, confirm:
 
 1. you have a Hermes checkout available, usually `~/.hermes/hermes-agent`
 2. you know which Hermes profile will run the cron job
-3. the Cloudflare Worker has `INGEST_SHARED_SECRET` configured
-4. you have the matching token value for `HERMES_TOKEN_ANALYTICS_TOKEN`
+3. the Cloudflare Worker has `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` configured
+4. you have the matching shared secret value for `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 5. the target host can read the Hermes `state.db`
 
 ## Step 1. Install the plugin into the Hermes checkout
@@ -95,7 +97,8 @@ Use the real plugin key for new installs.
 
 Worker side:
 
-- set `INGEST_SHARED_SECRET` in the Cloudflare Worker runtime
+- set `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` in the Cloudflare Worker runtime
+- legacy `INGEST_SHARED_SECRET` still works, but only as a fallback during migration
 
 Hermes side:
 
@@ -108,7 +111,7 @@ Recommended env block:
 export HERMES_TOKEN_ANALYTICS_DB_PATH="$HOME/.hermes/state.db"
 export HERMES_TOKEN_ANALYTICS_DB_TIMEOUT="30"
 export HERMES_TOKEN_ANALYTICS_ENDPOINT="https://token-usage-analytics.tevpro.workers.dev/api/ingest/hermes-usage"
-export HERMES_TOKEN_ANALYTICS_TOKEN="replace-with-worker-ingest-secret"
+export HERMES_TOKEN_ANALYTICS_SHARED_SECRET="replace-with-worker-ingest-secret"
 export HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG="hermes-usage"
 export HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME="Hermes Usage"
 export HERMES_TOKEN_ANALYTICS_ENVIRONMENT="production"
@@ -117,10 +120,25 @@ export HERMES_TOKEN_ANALYTICS_DAYS_BACK="30"
 
 Operational notes:
 
-- `HERMES_TOKEN_ANALYTICS_TOKEN` must exactly match Worker `INGEST_SHARED_SECRET`
+- `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` must exactly match Worker `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 - keep `HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG` stable after go-live
 - `HERMES_TOKEN_ANALYTICS_DAYS_BACK` controls how much history each sync republishes
 - if the dashboard UI says **Agent**, that is still this same workspace identity underneath
+
+### Migration from the old shared-secret names
+
+If you are upgrading from an older release, migrate both sides to `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`.
+
+1. In the Cloudflare Worker runtime, add `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` with the same value currently used for `INGEST_SHARED_SECRET`.
+2. In the Hermes profile `.env`, replace `HERMES_TOKEN_ANALYTICS_TOKEN=...` with `HERMES_TOKEN_ANALYTICS_SHARED_SECRET=...`.
+3. Run `hermes token-analytics doctor` and `hermes token-analytics show-config` to confirm the new name is being read.
+4. After validation, remove the legacy names from both environments so future operators only see one convention.
+
+Temporary compatibility rules in this release:
+
+- Worker side: `INGEST_SHARED_SECRET` is still accepted as a fallback.
+- Hermes side: `HERMES_TOKEN_ANALYTICS_TOKEN` is still accepted as a fallback.
+- Preferred steady state: only `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` remains.
 
 ## Step 4. Validate the install before scheduling anything
 
@@ -135,7 +153,7 @@ hermes token-analytics sync
 What success looks like:
 
 - `doctor` confirms the plugin command is callable and `state.db` is readable
-- `show-config` shows the resolved endpoint, workspace fields, and redacted token
+- `show-config` shows the resolved endpoint, workspace fields, and redacted shared secret
 - `sync` posts successfully to `/api/ingest/hermes-usage`
 
 If `sync` fails, stop here and fix config before adding cron.
@@ -214,10 +232,10 @@ Use this sequence for changes or repairs:
 
 Usually means:
 
-- missing `HERMES_TOKEN_ANALYTICS_TOKEN`
-- token does not match `INGEST_SHARED_SECRET`
+- missing `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
+- shared secret does not match `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 
-### `503 INGEST_SHARED_SECRET is not configured`
+### `503 HERMES_TOKEN_ANALYTICS_SHARED_SECRET is not configured`
 
 Usually means:
 

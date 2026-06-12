@@ -6,7 +6,7 @@ This integration is now a **Hermes-native Python plugin**, not a Node or bash si
 
 Operator setup is:
 
-1. Set the Cloudflare Worker secret `INGEST_SHARED_SECRET`.
+1. Set the Cloudflare Worker secret `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`.
 2. Export the plugin env vars shown below.
 3. Validate the install with:
    ```bash
@@ -78,9 +78,9 @@ The Worker route rejects unauthenticated syncs.
 
 Set this secret in the Worker runtime:
 
-- `INGEST_SHARED_SECRET`
+- `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 
-The plugin's `HERMES_TOKEN_ANALYTICS_TOKEN` must match that Worker secret.
+The plugin and the Worker should use the same env var name, `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`. Legacy `INGEST_SHARED_SECRET` and `HERMES_TOKEN_ANALYTICS_TOKEN` are still accepted during migration.
 
 The ingest endpoint in this repo is:
 
@@ -89,7 +89,7 @@ POST /api/ingest/hermes-usage
 ```
 
 A missing Worker secret returns `503`.
-A bad or missing bearer token returns `401`.
+A bad or missing shared secret returns `401`.
 
 ## Plugin configuration
 
@@ -102,7 +102,7 @@ The plugin uses environment variables as the operator-facing source of truth.
 | `HERMES_TOKEN_ANALYTICS_DB_PATH` | No | `~/.hermes/state.db` | `/home/hermes/.hermes/state.db` | SQLite database path to read Hermes usage from. Override only if `state.db` lives elsewhere. |
 | `HERMES_TOKEN_ANALYTICS_DB_TIMEOUT` | No | `30` seconds | `30` | SQLite and network-facing timeout budget for sync operations. Increase if the host or endpoint is slow. |
 | `HERMES_TOKEN_ANALYTICS_ENDPOINT` | Yes | none | `https://token-usage-analytics.tevpro.workers.dev/api/ingest/hermes-usage` | Full HTTPS ingest URL for this dashboard. |
-| `HERMES_TOKEN_ANALYTICS_TOKEN` | Yes | none | `tok_live_xxx` | Bearer token sent to the Worker. Must match Worker `INGEST_SHARED_SECRET`. |
+| `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` | Yes | none | `tok_live_xxx` | Bearer token sent to the Worker. Must match Worker `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`. |
 | `HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG` | No | `hermes-usage` | `prod-hermes-usage` | Stable workspace identifier used by the dashboard and D1 rows. Keep this stable once data exists. In the current dashboard UI, this workspace is presented as an agent selection. |
 | `HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME` | No | `Hermes Usage` | `Tevpro Hermes Usage` | Human-readable workspace label shown in the dashboard. In the current UI this is the friendly agent name users see. |
 | `HERMES_TOKEN_ANALYTICS_ENVIRONMENT` | No | `production` | `staging` | Environment label attached to imported rollups. |
@@ -114,7 +114,7 @@ The plugin uses environment variables as the operator-facing source of truth.
 export HERMES_TOKEN_ANALYTICS_DB_PATH="$HOME/.hermes/state.db"
 export HERMES_TOKEN_ANALYTICS_DB_TIMEOUT="30"
 export HERMES_TOKEN_ANALYTICS_ENDPOINT="https://token-usage-analytics.tevpro.workers.dev/api/ingest/hermes-usage"
-export HERMES_TOKEN_ANALYTICS_TOKEN="replace-with-worker-ingest-secret"
+export HERMES_TOKEN_ANALYTICS_SHARED_SECRET="replace-with-worker-ingest-secret"
 export HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG="hermes-usage"
 export HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME="Hermes Usage"
 export HERMES_TOKEN_ANALYTICS_ENVIRONMENT="production"
@@ -151,7 +151,7 @@ hermes token-analytics doctor
 Use it when:
 
 - first-time setup
-- token rotation
+- shared secret rotation
 - endpoint changes
 - DB path changes
 - cron jobs start failing
@@ -172,7 +172,7 @@ Expected behavior:
 - shows endpoint
 - shows workspace slug/name/environment
 - shows days-back and timeout values
-- **redacts** `HERMES_TOKEN_ANALYTICS_TOKEN`
+- **redacts** `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 
 Use it to catch:
 
@@ -285,7 +285,7 @@ hermes cron pause <job_id>
 Pause before:
 
 - endpoint maintenance
-- token rotation
+- shared secret rotation
 - changing workspace routing
 - large manual backfills
 
@@ -363,7 +363,7 @@ Practical checks:
 
 - sync command exits successfully
 - no `401 Unauthorized`
-- no `503 INGEST_SHARED_SECRET is not configured`
+- no `503 HERMES_TOKEN_ANALYTICS_SHARED_SECRET is not configured`
 - no `400` validation error from malformed payload data
 
 ### 5. Verify dashboard data moved
@@ -388,7 +388,7 @@ Confirm the cron-triggered run behaves the same as the manual sync path.
 
 ## Failure modes and remediation
 
-### Missing or bad `HERMES_TOKEN_ANALYTICS_TOKEN`
+### Missing or bad `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 
 Symptoms:
 
@@ -397,8 +397,8 @@ Symptoms:
 
 Fix:
 
-- confirm `HERMES_TOKEN_ANALYTICS_TOKEN` is set
-- confirm it exactly matches Worker `INGEST_SHARED_SECRET`
+- confirm `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` is set
+- confirm it exactly matches Worker `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 - rerun `doctor`, then `sync`
 
 ### Bad `HERMES_TOKEN_ANALYTICS_ENDPOINT`
@@ -446,7 +446,7 @@ Fix:
 Symptoms:
 
 - `sync` fails with `503`
-- response includes `INGEST_SHARED_SECRET is not configured in the Worker runtime`
+- response includes `HERMES_TOKEN_ANALYTICS_SHARED_SECRET is not configured in the Worker runtime`
 
 Fix:
 
@@ -493,8 +493,28 @@ Canonical operator guidance is now this plugin document.
 
 If you still have old env files or wrappers, map them conceptually like this:
 
-- old sidecar endpoint/token settings -> plugin `HERMES_TOKEN_ANALYTICS_ENDPOINT` and `HERMES_TOKEN_ANALYTICS_TOKEN`
+- old sidecar endpoint/token settings -> plugin `HERMES_TOKEN_ANALYTICS_ENDPOINT` and `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
 - old shell scheduling -> `hermes cron ...`
 - old direct Python export invocation -> `hermes token-analytics sync`
+
+### Shared-secret variable migration
+
+Older installs may still use:
+
+- Worker: `INGEST_SHARED_SECRET`
+- Hermes plugin: `HERMES_TOKEN_ANALYTICS_TOKEN`
+
+Move both sides to:
+
+- `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`
+
+Recommended migration sequence:
+
+1. Add `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` to the Worker with the same secret value.
+2. Add `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` to the Hermes profile `.env` with the same value.
+3. Run `hermes token-analytics doctor` and `hermes token-analytics sync`.
+4. Once verified, delete `INGEST_SHARED_SECRET` and `HERMES_TOKEN_ANALYTICS_TOKEN`.
+
+This release keeps the old names as fallbacks so the migration can be done safely, but the new name should be treated as the canonical interface in docs, automation, and future installs.
 
 The important migration outcome is simple: keep ingestion Hermes-native and keep scheduling under Hermes cron.

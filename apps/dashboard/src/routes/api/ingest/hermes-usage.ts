@@ -9,11 +9,14 @@ export const Route = createFileRoute('/api/ingest/hermes-usage')({
     handlers: {
       POST: async ({ request }) => {
         const env = getRuntimeEnv()
-        const expectedToken = env.INGEST_SHARED_SECRET
+        const expectedToken = env.HERMES_TOKEN_ANALYTICS_SHARED_SECRET || env.INGEST_SHARED_SECRET
 
         if (!expectedToken) {
           return Response.json(
-            { error: 'INGEST_SHARED_SECRET is not configured in the Worker runtime.' },
+            {
+              error:
+                'HERMES_TOKEN_ANALYTICS_SHARED_SECRET is not configured in the Worker runtime. Legacy INGEST_SHARED_SECRET is still accepted.',
+            },
             { status: 503 },
           )
         }
