@@ -1009,14 +1009,14 @@ function ProjectFilterChip({
                   className="flex cursor-pointer items-start justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm hover:border-slate-300 hover:bg-slate-50"
                   key={project.projectId}
                 >
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <div className="font-medium text-slate-800">
-                        {project.projectName}
-                      </div>
+                  <div className="min-w-0 space-y-1.5">
+                    <div className="font-medium text-slate-800">
+                      {project.projectName}
+                    </div>
+                    <div>
                       <AgentStatusIndicator project={project} />
                     </div>
-                    <div className="mt-1 text-xs text-slate-500">
+                    <div className="text-xs text-slate-500">
                       {project.projectProvider} · {project.projectSlug}
                     </div>
                   </div>
