@@ -470,7 +470,9 @@ async function loadSnapshotFromD1(
 ): Promise<DashboardSnapshot> {
   const workspaceIds = selections.map((selection) => selection.workspace.id)
   const rows = await loadDailyRollups(env.DB, workspaceIds, getDaysBack(env))
-  const availableProjects = selections.map(({ workspace }) => ({
+  const availableProjects = selections.map(({ latestCreatedAt, latestDay, workspace }) => ({
+    latestGeneratedAt: new Date(latestCreatedAt).toISOString(),
+    latestRollupDay: latestDay,
     projectId: workspace.id,
     projectName: workspace.name,
     projectProvider: workspace.provider,

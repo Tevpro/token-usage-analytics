@@ -491,7 +491,12 @@ describe('ingestExternalRollupsToD1', () => {
     expect(snapshot.headline.sourceLabel).toContain('Hermes data')
     expect(snapshot.headline.summary).toContain('Latest usage bucket: n/a.')
     expect(snapshot.projects.available).toEqual([
-      expect.objectContaining({ projectName: 'Hermes Usage', projectSlug: 'hermes-usage' }),
+      expect.objectContaining({
+        latestGeneratedAt: '2026-05-23T12:00:00.000Z',
+        latestRollupDay: null,
+        projectName: 'Hermes Usage',
+        projectSlug: 'hermes-usage',
+      }),
     ])
     expect(filtered.headline.granularity).toBe('hour')
     expect(filtered.charts.requestsCostCache).toHaveLength(24)

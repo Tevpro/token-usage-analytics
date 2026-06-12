@@ -1,4 +1,6 @@
 export type DashboardProjectOption = {
+  latestGeneratedAt?: string
+  latestRollupDay?: string | null
   projectId: string
   projectName: string
   projectProvider: string
@@ -549,6 +551,8 @@ function resolveAvailableProjects(availableProjects: DashboardProjectOption[] | 
   for (const row of dailyRows) {
     if (!projectMap.has(row.projectId)) {
       projectMap.set(row.projectId, {
+        latestGeneratedAt: row.latestGeneratedAt,
+        latestRollupDay: row.latestRollupDay,
         projectId: row.projectId,
         projectName: row.projectName,
         projectProvider: row.projectProvider,
@@ -600,6 +604,8 @@ function summarizeProjects(
       cachedTokens: 0,
       cost: 0,
       inputTokens: 0,
+      latestGeneratedAt: project.latestGeneratedAt,
+      latestRollupDay: project.latestRollupDay,
       outputTokens: 0,
       projectId: project.projectId,
       projectName: project.projectName,

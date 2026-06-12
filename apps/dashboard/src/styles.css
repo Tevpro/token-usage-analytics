@@ -262,6 +262,40 @@
   box-shadow: 0 0 0 3px rgba(100, 116, 139, 0.16);
 }
 
+.dashboard-inline-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.dashboard-inline-status .dashboard-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  box-shadow: none;
+  animation: none;
+}
+
+.dashboard-inline-status.dashboard-status-healthy {
+  color: #166534;
+}
+
+.dashboard-inline-status.dashboard-status-delayed {
+  color: #b45309;
+}
+
+.dashboard-inline-status.dashboard-status-stale {
+  color: #b91c1c;
+}
+
+.dashboard-inline-status.dashboard-status-unknown {
+  color: #475569;
+}
+
 .dashboard-header-actions {
   display: flex;
   flex-wrap: wrap;

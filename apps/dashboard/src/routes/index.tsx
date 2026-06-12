@@ -47,6 +47,7 @@ import type {
 } from '#/lib/dashboard-timeframe'
 import { loadDashboardSnapshotForRequest } from '#/lib/openai-usage'
 import type {
+  DashboardProjectOption,
   DashboardProjectSummary,
   DashboardSnapshot,
 } from '#/lib/token-analytics'
@@ -969,8 +970,11 @@ function ProjectFilterChip({
                 key={project.projectId}
               >
                 <div className="min-w-0">
-                  <div className="font-medium text-slate-800">
-                    {project.projectName}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="font-medium text-slate-800">
+                      {project.projectName}
+                    </div>
+                    <AgentStatusIndicator project={project} />
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
                     {project.projectProvider} · {project.projectSlug}
@@ -1029,9 +1033,12 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
                     <span className="font-medium text-slate-800">
                       {project.projectName}
                     </span>
-                    <span className="text-xs text-slate-500 md:hidden">
-                      {project.projectProvider} · {project.projectSlug}
-                    </span>
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                      <AgentStatusIndicator project={project} />
+                      <span className="md:hidden">
+                        {project.projectProvider} · {project.projectSlug}
+                      </span>
+                    </div>
                   </div>
                 </TableCell>
                 <TableCell className="hidden md:table-cell text-slate-500">
@@ -1055,6 +1062,22 @@ function ProjectBreakdownCard({ projects }: ProjectBreakdownCardProps) {
         </Table>
       </CardContent>
     </Card>
+  )
+}
+
+function AgentStatusIndicator({ project }: AgentStatusIndicatorProps) {
+  const status = getAgentDataStatus(project.latestGeneratedAt || '', {
+    latestRollupDay: project.latestRollupDay || undefined,
+  })
+
+  return (
+    <span
+      className={`dashboard-inline-status dashboard-status-${status.level}`}
+      title={status.detail}
+    >
+      <span aria-hidden className="dashboard-status-dot" />
+      <span>{status.label}</span>
+    </span>
   )
 }
 
@@ -1744,6 +1767,10 @@ type ProjectFilterChipProps = {
 
 type ProjectBreakdownCardProps = {
   projects: DashboardProjectSummary[]
+}
+
+type AgentStatusIndicatorProps = {
+  project: Pick<DashboardProjectOption, 'latestGeneratedAt' | 'latestRollupDay'>
 }
 
 type DashboardSearch = {
