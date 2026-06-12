@@ -69,7 +69,6 @@ function Home() {
   const snapshot = Route.useLoaderData()
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
-  const [trafficChartMode, setTrafficChartMode] = useState<TrafficChartMode>('bars')
   const isNarrowViewport = useIsMobileBreakpoint()
   const defaultTimeframe = useMemo(() => getInitialTimeframeSelection(snapshot), [snapshot])
   const availableProjectIds = useMemo(
@@ -77,6 +76,7 @@ function Home() {
     [snapshot.projects.available],
   )
   const activeTab = search.tab ?? 'overview'
+  const trafficChartMode = search.trafficMode ?? 'bars'
   const selectedProjectIds = useMemo(
     () => parseSelectedProjectIds(search.projects, availableProjectIds),
     [availableProjectIds, search.projects],
@@ -111,11 +111,15 @@ function Home() {
       ? 'Allocated hourly cost'
       : 'Allocated daily cost'
   const showTrafficChartModeToggle =
+    activeSnapshot.charts.requestsCostCache.length > 2
+  const useAggregatedTrafficBars =
     activeSnapshot.headline.granularity === 'hour' &&
     activeSnapshot.charts.requestsCostCache.length > 12
+  const effectiveTrafficChartMode =
+    showTrafficChartModeToggle ? trafficChartMode : 'bars'
   const trafficBarData = useMemo(
     () =>
-      showTrafficChartModeToggle
+      useAggregatedTrafficBars
         ? aggregateTrafficChartPoints(
             activeSnapshot.charts.requestsCostCache,
             12,
@@ -125,21 +129,14 @@ function Home() {
             endDay: item.day,
             startDay: item.day,
           })),
-    [activeSnapshot.charts.requestsCostCache, showTrafficChartModeToggle],
+    [activeSnapshot.charts.requestsCostCache, useAggregatedTrafficBars],
+  )
+  const trafficLineData = useMemo(
+    () => activeSnapshot.charts.requestsCostCache,
+    [activeSnapshot.charts.requestsCostCache],
   )
   const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
   const defaultBarMaxLabels = isNarrowViewport ? 4 : 6
-  const compactTrafficTrendData = useMemo(
-    () =>
-      isNarrowViewport
-        ? aggregateTrafficChartPoints(activeSnapshot.charts.requestsCostCache, mobileBucketCount)
-        : activeSnapshot.charts.requestsCostCache.map((item) => ({
-            ...item,
-            endDay: item.day,
-            startDay: item.day,
-          })),
-    [activeSnapshot.charts.requestsCostCache, isNarrowViewport, mobileBucketCount],
-  )
   const compactInputOutputData = useMemo(
     () =>
       isNarrowViewport
@@ -413,28 +410,28 @@ function Home() {
                     aria-label="Traffic chart display mode"
                   >
                     <Button
-                      aria-pressed={trafficChartMode === 'bars'}
+                      aria-pressed={effectiveTrafficChartMode === 'bars'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('bars')}
+                      onClick={() => updateSearch({ trafficMode: 'bars' })}
                       size="xs"
                       type="button"
                       variant={
-                        trafficChartMode === 'bars' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'bars' ? 'secondary' : 'ghost'
                       }
                     >
-                      12 bars
+                      {useAggregatedTrafficBars ? '12 bars' : 'Bars'}
                     </Button>
                     <Button
-                      aria-pressed={trafficChartMode === 'line'}
+                      aria-pressed={effectiveTrafficChartMode === 'line'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('line')}
+                      onClick={() => updateSearch({ trafficMode: 'line' })}
                       size="xs"
                       type="button"
                       variant={
-                        trafficChartMode === 'line' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'line' ? 'secondary' : 'ghost'
                       }
                     >
-                      24h line
+                      Line
                     </Button>
                   </div>
                 ) : null
@@ -447,8 +444,8 @@ function Home() {
               ]}
               title="Requests / Cost / Cache"
             >
-              {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
+              {effectiveTrafficChartMode === 'line' ? (
+                <TrafficTrendChart data={trafficLineData} title="Requests, cost, and cache trends" />
               ) : (
                 <TrafficBars
                   compactLabels={isNarrowViewport}
@@ -683,28 +680,28 @@ function Home() {
                     aria-label="Traffic chart display mode"
                   >
                     <Button
-                      aria-pressed={trafficChartMode === 'bars'}
+                      aria-pressed={effectiveTrafficChartMode === 'bars'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('bars')}
+                      onClick={() => updateSearch({ trafficMode: 'bars' })}
                       size="xs"
                       type="button"
                       variant={
-                        trafficChartMode === 'bars' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'bars' ? 'secondary' : 'ghost'
                       }
                     >
-                      12 bars
+                      {useAggregatedTrafficBars ? '12 bars' : 'Bars'}
                     </Button>
                     <Button
-                      aria-pressed={trafficChartMode === 'line'}
+                      aria-pressed={effectiveTrafficChartMode === 'line'}
                       className="chart-mode-button"
-                      onClick={() => setTrafficChartMode('line')}
+                      onClick={() => updateSearch({ trafficMode: 'line' })}
                       size="xs"
                       type="button"
                       variant={
-                        trafficChartMode === 'line' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'line' ? 'secondary' : 'ghost'
                       }
                     >
-                      24h line
+                      Line
                     </Button>
                   </div>
                 ) : null
@@ -717,8 +714,8 @@ function Home() {
               ]}
               title="Requests / Cost / Cache"
             >
-              {trafficChartMode === 'line' && showTrafficChartModeToggle ? (
-                <TrafficTrendChart data={compactTrafficTrendData} title="Requests, cost, and cache trends" />
+              {effectiveTrafficChartMode === 'line' ? (
+                <TrafficTrendChart data={trafficLineData} title="Requests, cost, and cache trends" />
               ) : (
                 <TrafficBars
                   compactLabels={isNarrowViewport}
@@ -1176,9 +1173,15 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels 
 }
 
 function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
-  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
-  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
-  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })))
+  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })), {
+    fillMissingWithZero: true,
+  })
+  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })), {
+    fillMissingWithZero: true,
+  })
+  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })), {
+    fillMissingWithZero: true,
+  })
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1200,8 +1203,12 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
 }
 
 function LineChart({ data, title }: LineChartProps) {
-  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })))
-  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })))
+  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })), {
+    fillMissingWithZero: true,
+  })
+  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })), {
+    fillMissingWithZero: true,
+  })
 
   return (
     <svg className="line-chart" viewBox="0 0 320 150" role="img">
@@ -1362,6 +1369,7 @@ function parseDashboardSearch(search: Record<string, unknown>): DashboardSearch 
   const startDay = getIsoDayParam(search.startDay)
   const endDay = getIsoDayParam(search.endDay)
   const projects = getProjectsParam(search.projects)
+  const trafficMode = getTrafficChartModeParam(search.trafficMode)
 
   return {
     endDay,
@@ -1369,6 +1377,7 @@ function parseDashboardSearch(search: Record<string, unknown>): DashboardSearch 
     projects,
     startDay,
     tab,
+    trafficMode,
   }
 }
 
@@ -1437,11 +1446,16 @@ function sanitizeDashboardSearch(
         ? startDay
         : undefined,
     tab: search.tab && search.tab !== 'overview' ? search.tab : undefined,
+    trafficMode: search.trafficMode === 'line' ? 'line' : undefined,
   }
 }
 
 function getDashboardTabParam(value: unknown): DashboardTab | undefined {
   return value === 'overview' || value === 'models' || value === 'cost' ? value : undefined
+}
+
+function getTrafficChartModeParam(value: unknown): TrafficChartMode | undefined {
+  return value === 'bars' || value === 'line' ? value : undefined
 }
 
 function getTimeframePresetParam(value: unknown): TimeframePreset | undefined {
@@ -1658,14 +1672,17 @@ function formatRefreshBasisLabel(value: string) {
   }).format(new Date(value))
 }
 
-function toPolylineSegments(points: Array<{ missing?: boolean; value: number }>) {
+function toPolylineSegments(
+  points: Array<{ missing?: boolean; value: number }>,
+  options?: { fillMissingWithZero?: boolean },
+) {
   const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
   const maxValue = Math.max(...presentValues, 1)
   const segments: string[] = []
   let currentSegment: string[] = []
 
   points.forEach((point, index) => {
-    if (point.missing) {
+    if (point.missing && !options?.fillMissingWithZero) {
       if (currentSegment.length >= 2) {
         segments.push(currentSegment.join(' '))
       }
@@ -1674,7 +1691,8 @@ function toPolylineSegments(points: Array<{ missing?: boolean; value: number }>)
     }
 
     const x = 16 + index * (288 / Math.max(points.length - 1, 1))
-    const y = 130 - (point.value / maxValue) * 112
+    const value = point.missing && options?.fillMissingWithZero ? 0 : point.value
+    const y = 130 - (value / maxValue) * 112
     currentSegment.push(`${x},${y}`)
   })
 
@@ -1734,6 +1752,7 @@ type DashboardSearch = {
   projects?: string
   startDay?: string
   tab?: DashboardTab
+  trafficMode?: TrafficChartMode
 }
 
 type DashboardTab = 'overview' | 'models' | 'cost'
