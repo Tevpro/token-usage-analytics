@@ -693,6 +693,33 @@
   stroke: var(--chart-red);
 }
 
+.chart-point {
+  fill: var(--chart-ink);
+  stroke: #fff;
+  stroke-width: 1.25;
+}
+
+.chart-point-muted {
+  fill: var(--chart-violet);
+}
+
+.chart-point-grey {
+  fill: var(--chart-grey);
+}
+
+.chart-point-red {
+  fill: var(--chart-red);
+}
+
+.chart-hover-target {
+  fill: transparent;
+}
+
+.chart-axis-label {
+  fill: #64748b;
+  font-size: 8px;
+}
+
 .panel-card-signals {
   min-height: 0;
 }
