@@ -1189,7 +1189,7 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
   const hoverTargets = buildLineChartHoverTargets(data.length)
 
   return (
-    <svg className="line-chart" viewBox="0 0 320 150" role="img">
+    <svg className="line-chart" viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`} role="img">
       <title>{title}</title>
       <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1={LINE_CHART_BOTTOM} y2={LINE_CHART_BOTTOM} className="chart-axis" />
       <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="89" y2="89" className="chart-gridline" />
@@ -1221,7 +1221,7 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
       {ticks.map((tick) => (
         <g key={`traffic-tick-${tick.day}`}>
           <title>{formatBucketLabel(tick.day)}</title>
-          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y="134">
+          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y={LINE_CHART_LABEL_Y}>
             {formatLineAxisLabel(tick.day)}
           </text>
         </g>
@@ -1243,7 +1243,7 @@ function LineChart({ data, title }: LineChartProps) {
   const hoverTargets = buildLineChartHoverTargets(data.length)
 
   return (
-    <svg className="line-chart" viewBox="0 0 320 150" role="img">
+    <svg className="line-chart" viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`} role="img">
       <title>{title}</title>
       <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1={LINE_CHART_BOTTOM} y2={LINE_CHART_BOTTOM} className="chart-axis" />
       <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="89" y2="89" className="chart-gridline" />
@@ -1269,7 +1269,7 @@ function LineChart({ data, title }: LineChartProps) {
       {ticks.map((tick) => (
         <g key={`input-output-tick-${tick.day}`}>
           <title>{formatBucketLabel(tick.day)}</title>
-          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y="134">
+          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y={LINE_CHART_LABEL_Y}>
             {formatLineAxisLabel(tick.day)}
           </text>
         </g>
@@ -1682,12 +1682,23 @@ function formatLineAxisLabel(value: string) {
   const isTimestamp = value.includes('T')
   const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
 
+  if (isTimestamp) {
+    return new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      timeZone: DASHBOARD_TIME_ZONE,
+    })
+      .format(date)
+      .replace(/\s/g, '')
+      .toLowerCase()
+  }
+
   return new Intl.DateTimeFormat('en-US', {
     day: 'numeric',
-    hour: isTimestamp ? 'numeric' : undefined,
-    month: 'numeric',
-    timeZone: isTimestamp ? DASHBOARD_TIME_ZONE : 'UTC',
-  }).format(date)
+    month: 'short',
+    timeZone: 'UTC',
+  })
+    .format(date)
+    .toLowerCase()
 }
 
 function shouldRenderTick(index: number, total: number, maxLabels = 6) {
@@ -1852,6 +1863,8 @@ const LINE_CHART_LEFT = 16
 const LINE_CHART_RIGHT = 304
 const LINE_CHART_TOP = 16
 const LINE_CHART_BOTTOM = 126
+const LINE_CHART_LABEL_Y = 140
+const LINE_CHART_VIEWBOX_HEIGHT = 156
 const LINE_CHART_WIDTH = LINE_CHART_RIGHT - LINE_CHART_LEFT
 const LINE_CHART_HEIGHT = LINE_CHART_BOTTOM - LINE_CHART_TOP
 

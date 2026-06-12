@@ -601,8 +601,8 @@
   width: 100%;
   max-width: 100%;
   height: auto;
-  min-height: 228px;
-  aspect-ratio: 320 / 150;
+  min-height: 236px;
+  aspect-ratio: 320 / 156;
 }
 
 @media (max-width: 768px) {
@@ -644,7 +644,7 @@
   }
 
   .line-chart {
-    min-height: 188px;
+    min-height: 196px;
   }
 }
 
@@ -716,8 +716,9 @@
 }
 
 .chart-axis-label {
-  fill: #64748b;
-  font-size: 8px;
+  fill: #334155;
+  font-size: 9px;
+  font-weight: 600;
 }
 
 .panel-card-signals {
