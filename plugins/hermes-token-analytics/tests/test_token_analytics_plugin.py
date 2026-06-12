@@ -137,7 +137,7 @@ def _config(db_path: Path) -> TokenAnalyticsConfig:
         db_path=db_path,
         db_timeout=1.0,
         endpoint="https://analytics.example.com/api/ingest/hermes-usage",
-        token="secret-token-value",
+        shared_secret="secret-token-value",
         workspace_slug="tevpro-hermes",
         workspace_name="Tevpro Hermes",
         environment="production",
@@ -248,7 +248,7 @@ def test_diagnose_config_reports_missing_ingest_settings(tmp_path):
 
     config = _config(db_path)
     config.endpoint = ""
-    config.token = ""
+    config.shared_secret = ""
     report = diagnose_config(config, require_ingest=True)
 
     assert report.ok is False
@@ -257,7 +257,7 @@ def test_diagnose_config_reports_missing_ingest_settings(tmp_path):
     assert report.session_count == 2
     assert report.sessions_in_window == 2
     assert any("HERMES_TOKEN_ANALYTICS_ENDPOINT" in item for item in report.issues)
-    assert any("HERMES_TOKEN_ANALYTICS_TOKEN" in item for item in report.issues)
+    assert any("HERMES_TOKEN_ANALYTICS_SHARED_SECRET" in item for item in report.issues)
 
 
 def test_render_config_snapshot_masks_secret(tmp_path):
@@ -266,9 +266,18 @@ def test_render_config_snapshot_masks_secret(tmp_path):
 
     snapshot = render_config_snapshot(_config(db_path))
     assert snapshot["db_path"] == str(db_path)
-    assert snapshot["token_configured"] is True
-    assert snapshot["token"] == "secr**********alue"
+    assert snapshot["shared_secret_configured"] is True
+    assert snapshot["shared_secret"] == "secr**********alue"
     assert snapshot["source_label"] == "Hermes token analytics plugin"
+
+
+def test_shared_secret_env_prefers_new_name_and_falls_back_to_legacy(monkeypatch):
+    monkeypatch.delenv("HERMES_TOKEN_ANALYTICS_SHARED_SECRET", raising=False)
+    monkeypatch.setenv("HERMES_TOKEN_ANALYTICS_TOKEN", "legacy-secret")
+    assert _cli._shared_secret_from_env() == "legacy-secret"
+
+    monkeypatch.setenv("HERMES_TOKEN_ANALYTICS_SHARED_SECRET", "new-secret")
+    assert _cli._shared_secret_from_env() == "new-secret"
 
 
 def test_install_cron_wrapper_writes_executable_script(tmp_path):

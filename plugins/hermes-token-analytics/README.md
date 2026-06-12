@@ -7,6 +7,7 @@ This directory is the source-of-truth copy of the Hermes token analytics plugin 
 - `plugins/hermes-token-analytics/` — the plugin files as they should exist inside a Hermes checkout
 - `plugins/hermes-token-analytics/tests/` — plugin validation tests
 - `plugins/hermes-token-analytics/scripts/install-local-plugin.sh` — helper to copy the plugin into a local Hermes repo checkout
+- `docs/hermes-token-analytics-install-runbook.md` — exact operator procedure for install, validation, and cron setup
 
 ## Why this exists
 

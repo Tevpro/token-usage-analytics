@@ -101,6 +101,10 @@ function Home() {
     const selectedSet = new Set(selectedProjectIds)
     return snapshot.projects.available.filter((project) => selectedSet.has(project.projectId))
   }, [availableProjectIds.length, selectedProjectIds, snapshot.projects.available])
+  const newestFirstRollups: typeof activeSnapshot.table = useMemo(
+    () => [...activeSnapshot.table].sort((left, right) => right.day.localeCompare(left.day)),
+    [activeSnapshot.table],
+  )
   const agentDataStatus = useMemo(
     () => getAggregateAgentDataStatus(selectedProjects),
     [selectedProjects],
@@ -561,7 +565,7 @@ function Home() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {activeSnapshot.table.map((row) => (
+                    {newestFirstRollups.map((row: (typeof newestFirstRollups)[number]) => (
                       <TableRow key={row.traceId}>
                         <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
                           {row.traceId}
@@ -781,7 +785,7 @@ function Home() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activeSnapshot.table.map((row) => (
+                  {newestFirstRollups.map((row: (typeof newestFirstRollups)[number]) => (
                     <TableRow key={`${row.traceId}:cost`}>
                       <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
                         {row.traceId}
@@ -1233,54 +1237,106 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels 
 }
 
 function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
-  const requestSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })), {
-    fillMissingWithZero: true,
-  })
-  const costSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })), {
-    fillMissingWithZero: true,
-  })
-  const cacheSegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.tertiary })), {
-    fillMissingWithZero: true,
-  })
+  const requestSeries = buildLineChartSeries(
+    data.map((item) => ({ missing: item.missing, value: item.primary })),
+    { fillMissingWithZero: true },
+  )
+  const costSeries = buildLineChartSeries(
+    data.map((item) => ({ missing: item.missing, value: item.secondary })),
+    { fillMissingWithZero: true },
+  )
+  const cacheSeries = buildLineChartSeries(
+    data.map((item) => ({ missing: item.missing, value: item.tertiary })),
+    { fillMissingWithZero: true },
+  )
+  const ticks = buildLineChartTicks(data.map((item) => item.day))
+  const hoverTargets = buildLineChartHoverTargets(data.length)
 
   return (
-    <svg className="line-chart" viewBox="0 0 320 150" role="img">
+    <svg className="line-chart" viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`} role="img">
       <title>{title}</title>
-      <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
-      <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
-      <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
-      {requestSegments.map((points, index) => (
+      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1={LINE_CHART_BOTTOM} y2={LINE_CHART_BOTTOM} className="chart-axis" />
+      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="89" y2="89" className="chart-gridline" />
+      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="52" y2="52" className="chart-gridline" />
+      {requestSeries.segments.map((points, index) => (
         <polyline className="chart-line chart-line-grey" key={`requests-${index}`} points={points} />
       ))}
-      {costSegments.map((points, index) => (
+      {costSeries.segments.map((points, index) => (
         <polyline className="chart-line chart-line-red" key={`cost-${index}`} points={points} />
       ))}
-      {cacheSegments.map((points, index) => (
+      {cacheSeries.segments.map((points, index) => (
         <polyline className="chart-line chart-line-muted" key={`cache-${index}`} points={points} />
+      ))}
+      {requestSeries.points.map((point) => (
+        <circle className="chart-point chart-point-grey" cx={point.x} cy={point.y} key={`requests-point-${point.index}`} r="2.5" />
+      ))}
+      {costSeries.points.map((point) => (
+        <circle className="chart-point chart-point-red" cx={point.x} cy={point.y} key={`cost-point-${point.index}`} r="2.5" />
+      ))}
+      {cacheSeries.points.map((point) => (
+        <circle className="chart-point chart-point-muted" cx={point.x} cy={point.y} key={`cache-point-${point.index}`} r="2.5" />
+      ))}
+      {hoverTargets.map((target, index) => (
+        <g key={`traffic-hover-${data[index]?.day ?? index}`}>
+          <title>{formatTrafficTooltip(data[index])}</title>
+          <rect className="chart-hover-target" height={LINE_CHART_HEIGHT} width={target.width} x={target.x} y={LINE_CHART_TOP} />
+        </g>
+      ))}
+      {ticks.map((tick) => (
+        <g key={`traffic-tick-${tick.day}`}>
+          <title>{formatBucketLabel(tick.day)}</title>
+          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y={LINE_CHART_LABEL_Y}>
+            {formatLineAxisLabel(tick.day)}
+          </text>
+        </g>
       ))}
     </svg>
   )
 }
 
 function LineChart({ data, title }: LineChartProps) {
-  const primarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.primary })), {
-    fillMissingWithZero: true,
-  })
-  const secondarySegments = toPolylineSegments(data.map((item) => ({ missing: item.missing, value: item.secondary })), {
-    fillMissingWithZero: true,
-  })
+  const primarySeries = buildLineChartSeries(
+    data.map((item) => ({ missing: item.missing, value: item.primary })),
+    { fillMissingWithZero: true },
+  )
+  const secondarySeries = buildLineChartSeries(
+    data.map((item) => ({ missing: item.missing, value: item.secondary })),
+    { fillMissingWithZero: true },
+  )
+  const ticks = buildLineChartTicks(data.map((item) => item.day))
+  const hoverTargets = buildLineChartHoverTargets(data.length)
 
   return (
-    <svg className="line-chart" viewBox="0 0 320 150" role="img">
+    <svg className="line-chart" viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`} role="img">
       <title>{title}</title>
-      <line x1="16" x2="304" y1="130" y2="130" className="chart-axis" />
-      <line x1="16" x2="304" y1="92" y2="92" className="chart-gridline" />
-      <line x1="16" x2="304" y1="54" y2="54" className="chart-gridline" />
-      {primarySegments.map((points, index) => (
+      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1={LINE_CHART_BOTTOM} y2={LINE_CHART_BOTTOM} className="chart-axis" />
+      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="89" y2="89" className="chart-gridline" />
+      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="52" y2="52" className="chart-gridline" />
+      {primarySeries.segments.map((points, index) => (
         <polyline className="chart-line chart-line-muted" key={`primary-${index}`} points={points} />
       ))}
-      {secondarySegments.map((points, index) => (
+      {secondarySeries.segments.map((points, index) => (
         <polyline className="chart-line" key={`secondary-${index}`} points={points} />
+      ))}
+      {primarySeries.points.map((point) => (
+        <circle className="chart-point chart-point-muted" cx={point.x} cy={point.y} key={`primary-point-${point.index}`} r="2.5" />
+      ))}
+      {secondarySeries.points.map((point) => (
+        <circle className="chart-point" cx={point.x} cy={point.y} key={`secondary-point-${point.index}`} r="2.5" />
+      ))}
+      {hoverTargets.map((target, index) => (
+        <g key={`input-output-hover-${data[index]?.day ?? index}`}>
+          <title>{formatInputOutputTooltip(data[index])}</title>
+          <rect className="chart-hover-target" height={LINE_CHART_HEIGHT} width={target.width} x={target.x} y={LINE_CHART_TOP} />
+        </g>
+      ))}
+      {ticks.map((tick) => (
+        <g key={`input-output-tick-${tick.day}`}>
+          <title>{formatBucketLabel(tick.day)}</title>
+          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y={LINE_CHART_LABEL_Y}>
+            {formatLineAxisLabel(tick.day)}
+          </text>
+        </g>
       ))}
     </svg>
   )
@@ -1686,6 +1742,29 @@ function formatDayShort(value: string, compact = false) {
   }).format(date)
 }
 
+function formatLineAxisLabel(value: string) {
+  const isTimestamp = value.includes('T')
+  const date = isTimestamp ? new Date(value) : new Date(`${value}T00:00:00Z`)
+
+  if (isTimestamp) {
+    return new Intl.DateTimeFormat('en-US', {
+      hour: 'numeric',
+      timeZone: DASHBOARD_TIME_ZONE,
+    })
+      .format(date)
+      .replace(/\s/g, '')
+      .toLowerCase()
+  }
+
+  return new Intl.DateTimeFormat('en-US', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  })
+    .format(date)
+    .toLowerCase()
+}
+
 function shouldRenderTick(index: number, total: number, maxLabels = 6) {
   if (total <= maxLabels) return true
   if (index === 0 || index === total - 1) return true
@@ -1736,8 +1815,7 @@ function toPolylineSegments(
   points: Array<{ missing?: boolean; value: number }>,
   options?: { fillMissingWithZero?: boolean },
 ) {
-  const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
-  const maxValue = Math.max(...presentValues, 1)
+  const maxValue = getLineChartMaxValue(points)
   const segments: string[] = []
   let currentSegment: string[] = []
 
@@ -1750,10 +1828,8 @@ function toPolylineSegments(
       return
     }
 
-    const x = 16 + index * (288 / Math.max(points.length - 1, 1))
     const value = point.missing && options?.fillMissingWithZero ? 0 : point.value
-    const y = 130 - (value / maxValue) * 112
-    currentSegment.push(`${x},${y}`)
+    currentSegment.push(`${getLineChartX(index, points.length)},${getLineChartY(value, maxValue)}`)
   })
 
   if (currentSegment.length >= 2) {
@@ -1762,6 +1838,99 @@ function toPolylineSegments(
 
   return segments
 }
+
+function buildLineChartSeries(
+  points: Array<{ missing?: boolean; value: number }>,
+  options?: { fillMissingWithZero?: boolean },
+) {
+  const maxValue = getLineChartMaxValue(points)
+
+  return {
+    points: points.flatMap((point, index) => {
+      if (point.missing) {
+        return []
+      }
+
+      return [{
+        index,
+        value: point.value,
+        x: getLineChartX(index, points.length),
+        y: getLineChartY(point.value, maxValue),
+      }]
+    }),
+    segments: toPolylineSegments(points, options),
+  }
+}
+
+function buildLineChartTicks(days: string[], maxLabels = 6) {
+  return days.flatMap((day, index) => {
+    if (!shouldRenderTick(index, days.length, maxLabels)) {
+      return []
+    }
+
+    return [{
+      day,
+      x: getLineChartX(index, days.length),
+    }]
+  })
+}
+
+function buildLineChartHoverTargets(total: number) {
+  if (total === 0) {
+    return []
+  }
+
+  const slotWidth = total > 1 ? LINE_CHART_WIDTH / (total - 1) : LINE_CHART_WIDTH
+
+  return Array.from({ length: total }, (_, index) => ({
+    width: slotWidth,
+    x: Math.max(0, Math.min(320 - slotWidth, getLineChartX(index, total) - slotWidth / 2)),
+  }))
+}
+
+function getLineChartMaxValue(points: Array<{ missing?: boolean; value: number }>) {
+  const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
+  return Math.max(...presentValues, 1)
+}
+
+function getLineChartX(index: number, total: number) {
+  return LINE_CHART_LEFT + index * (LINE_CHART_WIDTH / Math.max(total - 1, 1))
+}
+
+function getLineChartY(value: number, maxValueOrPoints: number | Array<{ missing?: boolean; value: number }>) {
+  const maxValue =
+    typeof maxValueOrPoints === 'number'
+      ? maxValueOrPoints
+      : getLineChartMaxValue(maxValueOrPoints)
+
+  return LINE_CHART_BOTTOM - (value / maxValue) * LINE_CHART_HEIGHT
+}
+
+function formatTrafficTooltip(point: TrafficTrendChartProps['data'][number]) {
+  return [
+    formatBucketLabel(point.day),
+    `Requests: ${point.primary.toLocaleString('en-US')}`,
+    `Allocated cost: ${formatCurrency(point.secondary / 10)}`,
+    `Cached share: ${point.tertiary.toFixed(1)}%`,
+  ].join('\n')
+}
+
+function formatInputOutputTooltip(point: LineChartProps['data'][number]) {
+  return [
+    formatBucketLabel(point.day),
+    `Input tokens: ${point.primary.toLocaleString('en-US')}`,
+    `Output tokens: ${point.secondary.toLocaleString('en-US')}`,
+  ].join('\n')
+}
+
+const LINE_CHART_LEFT = 16
+const LINE_CHART_RIGHT = 304
+const LINE_CHART_TOP = 16
+const LINE_CHART_BOTTOM = 126
+const LINE_CHART_LABEL_Y = 140
+const LINE_CHART_VIEWBOX_HEIGHT = 156
+const LINE_CHART_WIDTH = LINE_CHART_RIGHT - LINE_CHART_LEFT
+const LINE_CHART_HEIGHT = LINE_CHART_BOTTOM - LINE_CHART_TOP
 
 const toneClassNameMap = {
   negative: 'text-rose-600',
