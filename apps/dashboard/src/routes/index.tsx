@@ -229,8 +229,14 @@ function Home() {
       {
         accent: 'var(--chart-magenta)',
         key: 'cost-total',
-        label: 'Total cost',
+        label: 'Tracked cost',
         value: formatCurrency(activeSnapshot.charts.costByDay.reduce((sum, item) => sum + item.cost, 0)),
+      },
+      {
+        accent: 'var(--chart-violet)',
+        key: 'projected-total',
+        label: 'Projected API cost',
+        value: formatCurrency(activeSnapshot.charts.models.reduce((sum, item) => sum + (item.projectedCost || 0), 0)),
       },
       {
         accent: 'var(--chart-magenta)',
@@ -239,8 +245,23 @@ function Home() {
         value: formatCurrency(Math.max(...activeSnapshot.charts.costByDay.map((item) => item.cost), 0)),
       },
     ],
+    [activeSnapshot.charts.costByDay, activeSnapshot.charts.models],
+  )
+  const trackedCostTotal = useMemo(
+    () => activeSnapshot.charts.costByDay.reduce((sum, item) => sum + item.cost, 0),
     [activeSnapshot.charts.costByDay],
   )
+  const projectedCostTotal = useMemo(
+    () => activeSnapshot.charts.models.reduce((sum, item) => sum + (item.projectedCost || 0), 0),
+    [activeSnapshot.charts.models],
+  )
+  const projectedCostDelta = projectedCostTotal - trackedCostTotal
+  const pricingCoverageLabel = activeSnapshot.headline.pricing
+    ? `${activeSnapshot.headline.pricing.coveredModelCount}/${activeSnapshot.headline.pricing.totalModelCount} models, ${(activeSnapshot.headline.pricing.coverageRatio * 100).toFixed(0)}% token coverage`
+    : null
+  const pricingRefreshLabel = activeSnapshot.headline.pricing?.lastRefreshedAt
+    ? `${formatRefreshBasisLabel(activeSnapshot.headline.pricing.lastRefreshedAt)} pricing refresh`
+    : 'No public pricing snapshot yet'
 
   return (
     <main className="dashboard-shell">
@@ -398,7 +419,7 @@ function Home() {
                 {kpi.value}
               </div>
               <p className={`mt-2 text-sm ${toneClassNameMap[kpi.tone]}`}>
-                {activeSnapshot.headline.sourceLabel}
+                {kpi.note || activeSnapshot.headline.sourceLabel}
               </p>
             </CardContent>
           </Card>
@@ -754,6 +775,42 @@ function Home() {
             </ChartCard>
           </section>
 
+          <Card className="panel-card">
+            <CardHeader className="panel-header-row">
+              <div>
+                <CardTitle className="panel-title">API pricing projection</CardTitle>
+                <p className="mt-1 text-sm text-slate-500">
+                  Compare tracked cost with a public API-priced estimate so zero-cost account traffic is still visible in dollar terms.
+                </p>
+              </div>
+              <Badge
+                className="daily-rollups-badge rounded-full border border-slate-200 bg-white px-3 py-1 text-slate-600"
+                title={activeSnapshot.headline.pricing?.sourceUrl || undefined}
+                variant="secondary"
+              >
+                <Activity className="mr-1 size-3.5" />
+                {pricingRefreshLabel}
+              </Badge>
+            </CardHeader>
+            <CardContent className="grid gap-4 md:grid-cols-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Tracked cost</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{formatCurrency(trackedCostTotal)}</p>
+                <p className="mt-2 text-sm text-slate-500">Recorded from the imported rollups in this window.</p>
+              </div>
+              <div className="rounded-2xl border border-violet-200 bg-violet-50/70 p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-violet-700">Projected API cost</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{formatCurrency(projectedCostTotal)}</p>
+                <p className="mt-2 text-sm text-violet-700">{pricingCoverageLabel || 'Waiting on public pricing coverage.'}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Delta</p>
+                <p className="mt-2 text-2xl font-semibold text-slate-950">{formatSignedCurrency(projectedCostDelta)}</p>
+                <p className="mt-2 text-sm text-slate-500">Positive means current public API pricing is above tracked cost, negative means the opposite.</p>
+              </div>
+            </CardContent>
+          </Card>
+
           <ProjectBreakdownCard projects={activeSnapshot.projects.breakdown} />
 
           <Card className="panel-card overflow-hidden daily-rollups-card">
@@ -781,7 +838,9 @@ function Home() {
                     <TableHead className="hidden md:table-cell text-right">
                       Cached %
                     </TableHead>
-                    <TableHead className="text-right">Cost</TableHead>
+                    <TableHead className="text-right">Tracked</TableHead>
+                    <TableHead className="hidden lg:table-cell text-right">Projected</TableHead>
+                    <TableHead className="hidden xl:table-cell text-right">Delta</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -802,6 +861,12 @@ function Home() {
                       </TableCell>
                       <TableCell className="text-right">
                         {formatCurrency(row.cost)}
+                      </TableCell>
+                      <TableCell className="hidden text-right lg:table-cell">
+                        {formatCurrency(row.projectedCost || 0)}
+                      </TableCell>
+                      <TableCell className="hidden text-right xl:table-cell">
+                        {formatSignedCurrency((row.projectedCost || 0) - row.cost)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -879,7 +944,9 @@ function ModelUsageBreakdownCard({ models }: ModelUsageBreakdownCardProps) {
                     <span>•</span>
                     <span>{formatCompact(item.tokens)} tokens</span>
                     <span>•</span>
-                    <span>{formatCurrency(item.cost)}</span>
+                    <span>{formatCurrency(item.cost)} tracked</span>
+                    <span>•</span>
+                    <span>{formatCurrency(item.projectedCost || 0)} projected</span>
                   </div>
                 </div>
                 <span className="font-medium text-slate-700">
@@ -1704,6 +1771,11 @@ function formatCurrency(value: number) {
   return `$${value.toFixed(2)}`
 }
 
+function formatSignedCurrency(value: number) {
+  const prefix = value > 0 ? '+' : ''
+  return `${prefix}${formatCurrency(value)}`
+}
+
 function formatModelLabel(model: string, provider: string) {
   return provider ? `${provider} · ${model}` : model
 }
@@ -1995,6 +2067,7 @@ type ModelUsageBreakdownCardProps = {
     color: string
     cost: number
     model: string
+    projectedCost?: number
     provider: string
     requests: number
     tokens: number
@@ -2042,6 +2115,7 @@ type ModelBarsProps = {
     color: string
     cost: number
     model: string
+    projectedCost?: number
     provider: string
     requests: number
     tokens: number
