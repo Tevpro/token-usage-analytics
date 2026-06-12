@@ -8,9 +8,10 @@ This repo is now a small monorepo:
 
 The goal is simple: keep the dashboard, ingest contract, plugin source, and operational docs in one place instead of splitting the truth across repos.
 
-For Hermes ingestion operations, the canonical operator guide is:
+For Hermes ingestion operations, the canonical operator guides are:
 
 - `docs/hermes-token-analytics-plugin.md`
+- `docs/hermes-token-analytics-install-runbook.md`
 
 ## What is in here
 
@@ -24,6 +25,7 @@ For Hermes ingestion operations, the canonical operator guide is:
   - `docs/ai-build-prompts.md`
   - `docs/cloudflare-deployment.md`
   - `docs/hermes-token-analytics-plugin.md`
+  - `docs/hermes-token-analytics-install-runbook.md`
   - `docs/hermes-sidecar-sync.md` (migration pointer to the plugin doc)
 
 ## Product direction
@@ -77,6 +79,7 @@ Supporting files:
 - install helper: `plugins/hermes-token-analytics/scripts/install-local-plugin.sh`
 - tests: `plugins/hermes-token-analytics/tests/`
 - operator guide: `docs/hermes-token-analytics-plugin.md`
+- install runbook: `docs/hermes-token-analytics-install-runbook.md`
 - install helper also writes a legacy shim for `plugins/observability/token_analytics` in target Hermes checkouts
 
 ## CI / deploy model

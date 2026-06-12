@@ -39,6 +39,8 @@ DEFAULT_WORKSPACE_NAME = "Hermes Usage"
 DEFAULT_WORKSPACE_SLUG = "hermes-usage"
 DEFAULT_SOURCE_LABEL = "Hermes token analytics plugin"
 DEFAULT_ENDPOINT_PATH = "/api/ingest/hermes-usage"
+SHARED_SECRET_ENV_VAR = "HERMES_TOKEN_ANALYTICS_SHARED_SECRET"
+LEGACY_SHARED_SECRET_ENV_VAR = "HERMES_TOKEN_ANALYTICS_TOKEN"
 HOUSTON_TIME_ZONE = ZoneInfo("America/Chicago")
 
 DEFAULT_USER_AGENT = "hermes-token-analytics/1.0"
@@ -49,7 +51,7 @@ class TokenAnalyticsConfig:
     db_path: Path
     db_timeout: float
     endpoint: str
-    token: str
+    shared_secret: str
     workspace_slug: str
     workspace_name: str
     environment: str
@@ -66,7 +68,7 @@ class DoctorReport:
     db_readable: bool
     db_path: str
     endpoint_configured: bool
-    token_configured: bool
+    shared_secret_configured: bool
     session_count: int | None
     sessions_in_window: int | None
     oldest_session_at: str | None
@@ -121,9 +123,14 @@ def _add_common_config_args(parser: argparse.ArgumentParser) -> None:
         help="Analytics ingest endpoint URL",
     )
     parser.add_argument(
+        "--shared-secret",
         "--token",
-        default=os.environ.get("HERMES_TOKEN_ANALYTICS_TOKEN", ""),
-        help="Bearer token for analytics ingest",
+        dest="shared_secret",
+        default=_shared_secret_from_env(),
+        help=(
+            "Shared secret for analytics ingest "
+            f"(default: {SHARED_SECRET_ENV_VAR}; legacy {LEGACY_SHARED_SECRET_ENV_VAR} also accepted)"
+        ),
     )
     parser.add_argument(
         "--workspace-slug",
@@ -183,7 +190,7 @@ def _config_from_args(args: argparse.Namespace) -> TokenAnalyticsConfig:
         db_path=Path(str(getattr(args, "db_path", "") or "")).expanduser(),
         db_timeout=max(0.1, float(getattr(args, "db_timeout", DEFAULT_DB_TIMEOUT) or DEFAULT_DB_TIMEOUT)),
         endpoint=endpoint,
-        token=str(getattr(args, "token", "") or "").strip(),
+        shared_secret=str(getattr(args, "shared_secret", "") or "").strip(),
         workspace_slug=_coalesce(str(getattr(args, "workspace_slug", "") or "").strip(), DEFAULT_WORKSPACE_SLUG),
         workspace_name=_coalesce(str(getattr(args, "workspace_name", "") or "").strip(), DEFAULT_WORKSPACE_NAME),
         environment=_coalesce(str(getattr(args, "environment", "") or "").strip(), DEFAULT_ENVIRONMENT),
@@ -297,7 +304,7 @@ def diagnose_config(config: TokenAnalyticsConfig, *, require_ingest: bool) -> Do
             issues.append(f"Unable to read state.db: {exc}")
 
     endpoint_configured = bool(config.endpoint)
-    token_configured = bool(config.token)
+    shared_secret_configured = bool(config.shared_secret)
     if require_ingest or endpoint_configured:
         if not endpoint_configured:
             issues.append(
@@ -306,11 +313,12 @@ def diagnose_config(config: TokenAnalyticsConfig, *, require_ingest: bool) -> Do
         elif not config.endpoint.startswith(("http://", "https://")):
             issues.append("Ingest endpoint must start with http:// or https://")
 
-    if require_ingest or token_configured:
-        if not token_configured:
+    if require_ingest or shared_secret_configured:
+        if not shared_secret_configured:
             issues.append(
-                "HERMES_TOKEN_ANALYTICS_TOKEN is required for sync. Store it in "
-                f"{display_hermes_home()}/.env or pass --token."
+                f"{SHARED_SECRET_ENV_VAR} is required for sync. Store it in "
+                f"{display_hermes_home()}/.env or pass --shared-secret. "
+                f"Legacy {LEGACY_SHARED_SECRET_ENV_VAR} is still accepted."
             )
 
     if config.days_back > 90:
@@ -328,7 +336,7 @@ def diagnose_config(config: TokenAnalyticsConfig, *, require_ingest: bool) -> Do
         db_readable=db_readable,
         db_path=str(config.db_path),
         endpoint_configured=endpoint_configured,
-        token_configured=token_configured,
+        shared_secret_configured=shared_secret_configured,
         session_count=session_count,
         sessions_in_window=sessions_in_window,
         oldest_session_at=oldest_session_at,
@@ -341,8 +349,8 @@ def render_config_snapshot(config: TokenAnalyticsConfig) -> dict[str, Any]:
         "db_path": str(config.db_path),
         "db_timeout": config.db_timeout,
         "endpoint": config.endpoint,
-        "token": _mask_secret(config.token),
-        "token_configured": bool(config.token),
+        "shared_secret": _mask_secret(config.shared_secret),
+        "shared_secret_configured": bool(config.shared_secret),
         "workspace_slug": config.workspace_slug,
         "workspace_name": config.workspace_name,
         "environment": config.environment,
@@ -619,7 +627,7 @@ def post_payload(config: TokenAnalyticsConfig, payload: dict[str, Any]) -> dict[
         config.endpoint,
         data=json.dumps(payload).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {config.token}",
+            "Authorization": f"Bearer {config.shared_secret}",
             "Content-Type": "application/json",
             "User-Agent": DEFAULT_USER_AGENT,
             "Accept": "application/json",
@@ -684,7 +692,7 @@ def _print_doctor_report(report: DoctorReport, *, as_json: bool) -> None:
     print(f"  db_exists: {'yes' if report.db_exists else 'no'}")
     print(f"  db_readable: {'yes' if report.db_readable else 'no'}")
     print(f"  endpoint_configured: {'yes' if report.endpoint_configured else 'no'}")
-    print(f"  token_configured: {'yes' if report.token_configured else 'no'}")
+    print(f"  shared_secret_configured: {'yes' if report.shared_secret_configured else 'no'}")
     if report.session_count is not None:
         print(f"  session_count: {report.session_count}")
     if report.sessions_in_window is not None:
@@ -744,6 +752,10 @@ def _env_float(name: str, default: float) -> float:
         return float(raw)
     except ValueError:
         return default
+
+
+def _shared_secret_from_env() -> str:
+    return os.environ.get(SHARED_SECRET_ENV_VAR, os.environ.get(LEGACY_SHARED_SECRET_ENV_VAR, "")).strip()
 
 
 def _session_utc_day(value: Any) -> str:

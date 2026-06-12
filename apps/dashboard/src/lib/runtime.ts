@@ -2,6 +2,7 @@ export type CloudflareAppEnv = {
   APP_ENV?: string
   DASHBOARD_WORKSPACE_SLUG?: string
   DB: D1Database
+  HERMES_TOKEN_ANALYTICS_SHARED_SECRET?: string
   INGEST_SHARED_SECRET?: string
   OPENAI_API_KEY?: string
   OPENAI_USAGE_DAYS_BACK?: string
