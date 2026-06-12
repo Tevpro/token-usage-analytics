@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
@@ -37,7 +37,7 @@ import {
   aggregateSingleMetricChartPoints,
   aggregateTrafficChartPoints,
 } from '#/lib/chart-presentation'
-import { getAgentDataStatus } from '#/lib/dashboard-agent-status'
+import { getAgentDataStatus, getAggregateAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
 import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
@@ -93,19 +93,21 @@ function Home() {
     })
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
+  const selectedProjects = useMemo(() => {
+    if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjectIds.length) {
+      return snapshot.projects.available
+    }
+
+    const selectedSet = new Set(selectedProjectIds)
+    return snapshot.projects.available.filter((project) => selectedSet.has(project.projectId))
+  }, [availableProjectIds.length, selectedProjectIds, snapshot.projects.available])
   const newestFirstRollups: typeof activeSnapshot.table = useMemo(
     () => [...activeSnapshot.table].sort((left, right) => right.day.localeCompare(left.day)),
     [activeSnapshot.table],
   )
   const agentDataStatus = useMemo(
-    () =>
-      getAgentDataStatus(projectSnapshot.headline.generatedAt, {
-        latestRollupDay: projectSnapshot.filters.availableEndDay,
-      }),
-    [
-      projectSnapshot.filters.availableEndDay,
-      projectSnapshot.headline.generatedAt,
-    ],
+    () => getAggregateAgentDataStatus(selectedProjects),
+    [selectedProjects],
   )
   const bucketLabel =
     activeSnapshot.headline.granularity === 'hour' ? 'Hourly' : 'Daily'
@@ -897,6 +899,8 @@ function ProjectFilterChip({
   onChange,
   selectedProjectIds,
 }: ProjectFilterChipProps) {
+  const [isOpen, setIsOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const selectedSet = new Set(selectedProjectIds)
   const selectedLabel =
     selectedProjectIds.length === 0 ||
@@ -909,6 +913,32 @@ function ProjectFilterChip({
             (project) => project.projectId === selectedProjectIds[0],
           )?.projectName || 'Selected agent'
         : `${selectedProjectIds.length} selected agents`
+
+  useEffect(() => {
+    if (!isOpen) {
+      return
+    }
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsOpen(false)
+      }
+    }
+
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [isOpen])
 
   const toggleProject = (projectId: string) => {
     if (selectedProjectIds.length === 0) {
@@ -935,8 +965,13 @@ function ProjectFilterChip({
   }
 
   return (
-    <details className="relative">
-      <summary className="toolbar-chip cursor-pointer list-none">
+    <div className="relative" ref={containerRef}>
+      <button
+        aria-expanded={isOpen}
+        className="toolbar-chip cursor-pointer"
+        onClick={() => setIsOpen((current) => !current)}
+        type="button"
+      >
         <Bot className="size-4" />
         {selectedLabel}
         <span className="text-[10px] uppercase tracking-[0.24em] text-slate-400">
@@ -944,58 +979,60 @@ function ProjectFilterChip({
             ? 'all'
             : `${selectedProjectIds.length}/${availableProjects.length}`}
         </span>
-      </summary>
-      <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 min-w-[280px] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <div>
-            <p className="text-sm font-semibold text-slate-900">Agents</p>
-            <p className="text-xs text-slate-500">
-              Select one or more agents to compare or roll up.
-            </p>
+      </button>
+      {isOpen ? (
+        <div className="absolute left-0 top-[calc(100%+0.5rem)] z-20 min-w-[280px] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">Agents</p>
+              <p className="text-xs text-slate-500">
+                Select one or more agents to compare or roll up.
+              </p>
+            </div>
+            <Button
+              onClick={() => onChange([])}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              All
+            </Button>
           </div>
-          <Button
-            onClick={() => onChange([])}
-            size="sm"
-            type="button"
-            variant="ghost"
-          >
-            All
-          </Button>
-        </div>
-        <div className="space-y-2">
-          {availableProjects.map((project) => {
-            const checked =
-              selectedProjectIds.length === 0 ||
-              selectedSet.has(project.projectId)
+          <div className="space-y-2">
+            {availableProjects.map((project) => {
+              const checked =
+                selectedProjectIds.length === 0 ||
+                selectedSet.has(project.projectId)
 
-            return (
-              <label
-                className="flex cursor-pointer items-start justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm hover:border-slate-300 hover:bg-slate-50"
-                key={project.projectId}
-              >
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <div className="font-medium text-slate-800">
-                      {project.projectName}
+              return (
+                <label
+                  className="flex cursor-pointer items-start justify-between gap-3 rounded-xl border border-slate-200 px-3 py-2 text-sm hover:border-slate-300 hover:bg-slate-50"
+                  key={project.projectId}
+                >
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="font-medium text-slate-800">
+                        {project.projectName}
+                      </div>
+                      <AgentStatusIndicator project={project} />
                     </div>
-                    <AgentStatusIndicator project={project} />
+                    <div className="mt-1 text-xs text-slate-500">
+                      {project.projectProvider} · {project.projectSlug}
+                    </div>
                   </div>
-                  <div className="mt-1 text-xs text-slate-500">
-                    {project.projectProvider} · {project.projectSlug}
-                  </div>
-                </div>
-                <input
-                  checked={checked}
-                  className="mt-1 size-4 rounded border-slate-300"
-                  onChange={() => toggleProject(project.projectId)}
-                  type="checkbox"
-                />
-              </label>
-            )
-          })}
+                  <input
+                    checked={checked}
+                    className="mt-1 size-4 rounded border-slate-300"
+                    onChange={() => toggleProject(project.projectId)}
+                    type="checkbox"
+                  />
+                </label>
+              )
+            })}
+          </div>
         </div>
-      </div>
-    </details>
+      ) : null}
+    </div>
   )
 }
 

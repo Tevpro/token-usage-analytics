@@ -4,6 +4,13 @@ export type AgentDataStatus = {
   level: 'healthy' | 'delayed' | 'stale' | 'unknown'
 }
 
+export type AgentStatusProject = {
+  latestGeneratedAt?: string
+  latestRollupDay?: string | null
+  projectId?: string
+  projectName?: string
+}
+
 export const DEFAULT_AGENT_UPDATE_INTERVAL_MS = 15 * 60 * 1000
 const DELAYED_UPDATE_MULTIPLIER = 2
 const MAX_ROLLUP_DAY_LAG_DAYS = 1
@@ -65,6 +72,81 @@ export function getAgentDataStatus(
   }
 }
 
+export function getAggregateAgentDataStatus(
+  projects: AgentStatusProject[],
+  options?: {
+    expectedUpdateIntervalMs?: number
+    now?: Date
+  },
+): AgentDataStatus {
+  if (projects.length === 0) {
+    return getAgentDataStatus('', options)
+  }
+
+  if (projects.length === 1) {
+    const [project] = projects
+    return getAgentDataStatus(project?.latestGeneratedAt || '', {
+      expectedUpdateIntervalMs: options?.expectedUpdateIntervalMs,
+      latestRollupDay: project?.latestRollupDay || undefined,
+      now: options?.now,
+    })
+  }
+
+  const projectStatuses = projects.map((project) => ({
+    name: project.projectName || project.projectId || 'Unknown agent',
+    status: getAgentDataStatus(project.latestGeneratedAt || '', {
+      expectedUpdateIntervalMs: options?.expectedUpdateIntervalMs,
+      latestRollupDay: project.latestRollupDay || undefined,
+      now: options?.now,
+    }),
+  }))
+  const counts = projectStatuses.reduce(
+    (accumulator, project) => {
+      accumulator[project.status.level] += 1
+      return accumulator
+    },
+    {
+      delayed: 0,
+      healthy: 0,
+      stale: 0,
+      unknown: 0,
+    },
+  )
+
+  if (counts.healthy === projectStatuses.length) {
+    return {
+      detail: `All ${projectStatuses.length} selected agents are receiving updates.`,
+      label: 'Receiving data',
+      level: 'healthy',
+    }
+  }
+
+  if (counts.stale === projectStatuses.length) {
+    return {
+      detail: `None of the ${projectStatuses.length} selected agents have recent data.`,
+      label: 'No recent data',
+      level: 'stale',
+    }
+  }
+
+  if (counts.unknown === projectStatuses.length) {
+    return {
+      detail: `Waiting for the first ingest from all ${projectStatuses.length} selected agents.`,
+      label: 'Waiting for data',
+      level: 'unknown',
+    }
+  }
+
+  const attentionProjects = projectStatuses.filter((project) => project.status.level !== 'healthy')
+  const attentionNames = formatProjectNameList(attentionProjects.map((project) => project.name))
+
+  return {
+    detail: `${attentionProjects.length} of ${projectStatuses.length} selected agents need attention: ${attentionNames}.`,
+    label: 'Some agents delayed',
+    level: 'delayed',
+  }
+}
+
 function getUtcDayLag(day: string, now: Date) {
   const normalizedDay = /^\d{4}-\d{2}-\d{2}$/.test(day) ? day : null
   if (!normalizedDay) {
@@ -101,4 +183,16 @@ function formatRelativeDuration(valueMs: number) {
   const days = Math.floor(hours / 24)
   const remainingHours = hours % 24
   return remainingHours === 0 ? `${days}d` : `${days}d ${remainingHours}h`
+}
+
+function formatProjectNameList(names: string[]) {
+  if (names.length === 0) {
+    return 'none'
+  }
+
+  if (names.length <= 2) {
+    return names.join(', ')
+  }
+
+  return `${names.slice(0, 2).join(', ')}, and ${names.length - 2} more`
 }
