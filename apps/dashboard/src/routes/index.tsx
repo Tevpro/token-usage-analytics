@@ -92,6 +92,10 @@ function Home() {
     })
   const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
   const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
+  const newestFirstRollups: typeof activeSnapshot.table = useMemo(
+    () => [...activeSnapshot.table].sort((left, right) => right.day.localeCompare(left.day)),
+    [activeSnapshot.table],
+  )
   const agentDataStatus = useMemo(
     () =>
       getAgentDataStatus(projectSnapshot.headline.generatedAt, {
@@ -558,7 +562,7 @@ function Home() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {activeSnapshot.table.map((row) => (
+                    {newestFirstRollups.map((row: (typeof newestFirstRollups)[number]) => (
                       <TableRow key={row.traceId}>
                         <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
                           {row.traceId}
@@ -778,7 +782,7 @@ function Home() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {activeSnapshot.table.map((row) => (
+                  {newestFirstRollups.map((row: (typeof newestFirstRollups)[number]) => (
                     <TableRow key={`${row.traceId}:cost`}>
                       <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
                         {row.traceId}
