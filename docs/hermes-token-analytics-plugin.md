@@ -17,7 +17,11 @@ Operator setup is:
    ```bash
    hermes token-analytics sync
    ```
-5. Let **Hermes cron own the schedule** by creating a cron job that runs the sync command on a cadence such as every 15 minutes.
+5. Let **Hermes cron own the schedule** by creating a single cron job that runs the sync command on a cadence such as every 15 minutes. That one job covers both rollups and heartbeat freshness.
+
+If you just need the exact install sequence, use:
+
+- `docs/hermes-token-analytics-install-runbook.md`
 
 The split of responsibility is intentional:
 
