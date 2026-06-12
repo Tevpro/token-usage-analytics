@@ -85,3 +85,20 @@ export const issueEvents = sqliteTable(
     index('issue_events_severity_idx').on(table.severity),
   ],
 )
+
+export const modelPricingCache = sqliteTable(
+  'model_pricing_cache',
+  {
+    matchKey: text('match_key').primaryKey(),
+    requestedModel: text('requested_model').notNull(),
+    sourceModel: text('source_model'),
+    sourceProvider: text('source_provider'),
+    inputCostPerToken: real('input_cost_per_token'),
+    outputCostPerToken: real('output_cost_per_token'),
+    cacheReadInputCostPerToken: real('cache_read_input_cost_per_token'),
+    resolved: integer('resolved').notNull().default(0),
+    fetchedAt: integer('fetched_at').notNull(),
+    sourceUrl: text('source_url').notNull(),
+  },
+  (table) => [index('model_pricing_cache_fetched_at_idx').on(table.fetchedAt)],
+)

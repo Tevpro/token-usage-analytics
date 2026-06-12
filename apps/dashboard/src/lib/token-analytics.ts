@@ -1,3 +1,5 @@
+import type { DashboardPricingStatus } from '#/lib/public-model-pricing'
+
 export type DashboardProjectOption = {
   latestGeneratedAt?: string
   latestRollupDay?: string | null
@@ -42,6 +44,7 @@ export type DashboardIssueByDay = DashboardIssue &
 export type DashboardModelSummary = {
   cost: number
   model: string
+  projectedCost?: number
   provider?: string
   requests: number
   tokens: number
@@ -51,6 +54,7 @@ export type DashboardModelDailyUsage = DashboardProjectOption & {
   cost: number
   day: string
   model: string
+  projectedCost?: number
   provider: string
   requests: number
   tokens: number
@@ -70,6 +74,7 @@ type SnapshotBuildInput = {
   issuesByDay?: DashboardIssueByDay[]
   models: DashboardModelSummary[]
   modelRowsByDay?: DashboardModelDailyUsage[]
+  pricingStatus?: DashboardPricingStatus
   rangeLabel?: string
   selectedProjectIds?: string[]
   sourceLabel: string
@@ -91,12 +96,26 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
           input.bucketWindowStart,
           input.bucketWindowEnd,
         )
+  const modelRowsByDay =
+    input.modelRowsByDay ||
+    input.models.map((model) => ({
+      ...EMPTY_PROJECT,
+      cost: model.cost,
+      day: aggregatedDailyRows.at(-1)?.day || '',
+      model: model.model,
+      projectedCost: model.projectedCost,
+      provider: model.provider || 'Unknown',
+      requests: model.requests,
+      tokens: model.tokens,
+    }))
+  const projectedCostByDay = summarizeProjectedCostByDay(modelRowsByDay)
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
       accumulator.cachedTokens += row.cachedTokens
       accumulator.cost += row.cost
       accumulator.inputTokens += row.inputTokens
       accumulator.outputTokens += row.outputTokens
+      accumulator.projectedCost += projectedCostByDay.get(row.day) || 0
       accumulator.requests += row.requests
       accumulator.totalTokens += row.totalTokens
       return accumulator
@@ -106,6 +125,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       cost: 0,
       inputTokens: 0,
       outputTokens: 0,
+      projectedCost: 0,
       requests: 0,
       totalTokens: 0,
     },
@@ -116,6 +136,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const modelRows = input.models.map((model, index) => ({
     ...model,
     color: MODEL_COLORS[index % MODEL_COLORS.length],
+    projectedCost: model.projectedCost || 0,
     provider: model.provider || 'Unknown',
   }))
   const topModel = modelRows.at(0)
@@ -128,6 +149,10 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const resolvedSelectedProjectIds = resolveSelectedProjectIds(availableProjects, input.selectedProjectIds)
   const projectBreakdown = summarizeProjects(input.dailyRows, availableProjects, resolvedSelectedProjectIds)
   const workspaceLabel = input.workspaceName || summarizeProjectSelection(availableProjects, resolvedSelectedProjectIds)
+  const pricingSummary =
+    input.pricingStatus && input.pricingStatus.totalModelCount > 0
+      ? `${Math.round(input.pricingStatus.coverageRatio * 100)}% of model tokens matched public API pricing.`
+      : 'Projected API pricing becomes available once a model price match is found.'
 
   return {
     callouts: [
@@ -137,11 +162,13 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       topDayByTokens
         ? `${formatDay(topDayByTokens.day)} was the busiest ${bucketLabel} at ${formatCompactNumber(topDayByTokens.totalTokens)} total tokens.`
         : `No ${bucketLabel}-level token data was returned for this window.`,
-      projectBreakdown.length > 1
-        ? `${projectBreakdown[0].projectName} led the selected project set with ${formatCompactNumber(projectBreakdown[0].totalTokens)} tokens.`
-        : topDayByCost && topDayByCost.cost > 0
-          ? `${formatDay(topDayByCost.day)} carried the highest tracked cost for any ${bucketLabel} at $${topDayByCost.cost.toFixed(2)}.`
-          : `Source label: ${input.sourceLabel}.`,
+      totals.projectedCost > 0
+        ? `Projected API pricing for the selected window is $${totals.projectedCost.toFixed(2)} versus $${totals.cost.toFixed(2)} tracked actual cost.`
+        : projectBreakdown.length > 1
+          ? `${projectBreakdown[0].projectName} led the selected project set with ${formatCompactNumber(projectBreakdown[0].totalTokens)} tokens.`
+          : topDayByCost && topDayByCost.cost > 0
+            ? `${formatDay(topDayByCost.day)} carried the highest tracked cost for any ${bucketLabel} at $${topDayByCost.cost.toFixed(2)}.`
+            : `Source label: ${input.sourceLabel}.`,
     ],
     charts: {
       costByDay: aggregatedDailyRows.map((row) => ({
@@ -178,23 +205,14 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       hourlyModelRowsByDay: input.hourlyModelRowsByDay,
       hourlyRows: input.hourlyRows,
       issuesByDay: input.issuesByDay || input.issues.map((issue) => ({ ...issue, ...EMPTY_PROJECT, day: availableEndDay })),
-      modelRowsByDay:
-        input.modelRowsByDay ||
-        input.models.map((model) => ({
-          ...EMPTY_PROJECT,
-          cost: model.cost,
-          day: availableEndDay,
-          model: model.model,
-          provider: model.provider || 'Unknown',
-          requests: model.requests,
-          tokens: model.tokens,
-        })),
+      modelRowsByDay,
       selectedProjectIds: resolvedSelectedProjectIds,
     },
     headline: {
       environment: input.environment,
       generatedAt: input.generatedAt,
       granularity,
+      pricing: input.pricingStatus,
       rangeLabel: input.rangeLabel || `Last ${aggregatedDailyRows.length} ${granularity === 'hour' ? 'hours' : 'days'}`,
       sourceLabel: input.sourceLabel,
       summary:
@@ -215,21 +233,31 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     kpis: [
       {
         label: 'Total Tokens',
+        note: pricingSummary,
         tone: 'neutral',
         value: formatCompactNumber(totals.totalTokens),
       },
       {
         label: 'Tracked Cost',
+        note: input.sourceLabel,
         tone: totals.cost > 0 ? 'warning' : 'neutral',
         value: `$${totals.cost.toFixed(2)}`,
       },
       {
+        label: 'Projected API Cost',
+        note: pricingSummary,
+        tone: totals.projectedCost > totals.cost ? 'warning' : totals.projectedCost > 0 ? 'positive' : 'neutral',
+        value: `$${totals.projectedCost.toFixed(2)}`,
+      },
+      {
         label: 'API Calls',
+        note: pricingSummary,
         tone: 'neutral',
         value: totals.requests.toLocaleString('en-US'),
       },
       {
         label: 'Cached Input Share',
+        note: pricingSummary,
         tone: cacheRate >= 0.2 ? 'positive' : cacheRate >= 0.05 ? 'warning' : 'negative',
         value: `${(cacheRate * 100).toFixed(1)}%`,
       },
@@ -242,10 +270,12 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     table: aggregatedDailyRows.map((row) => ({
       cachedShare: calculateCachedShare(row),
       cost: row.cost,
+      costDelta: roundCurrency((projectedCostByDay.get(row.day) || 0) - row.cost),
       day: row.day,
       hasData: row.hasData !== false,
       inputTokens: resolveTotalInputTokens(row),
       outputTokens: row.outputTokens,
+      projectedCost: projectedCostByDay.get(row.day) || 0,
       requests: row.requests,
       totalTokens: row.totalTokens,
       traceId: normalizeTraceId(row.day),
@@ -445,6 +475,19 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   }
 
   return [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
+}
+
+function summarizeProjectedCostByDay(rows: DashboardModelDailyUsage[]) {
+  const dayMap = new Map<string, number>()
+
+  for (const row of rows) {
+    if (!row.projectedCost) {
+      continue
+    }
+    dayMap.set(row.day, roundCurrency((dayMap.get(row.day) || 0) + row.projectedCost))
+  }
+
+  return dayMap
 }
 
 function fillMissingDailyBuckets(rows: DashboardDailyRow[], windowStart?: string, windowEnd?: string) {
@@ -682,6 +725,10 @@ function normalizeTraceId(value: string) {
   return value.replace(/[^0-9A-Za-z]/g, '').slice(-12) || 'window'
 }
 
+function roundCurrency(value: number) {
+  return Math.round(value * 100) / 100
+}
+
 export type DashboardSnapshot = {
   callouts: string[]
   charts: {
@@ -700,6 +747,7 @@ export type DashboardSnapshot = {
       color: string
       cost: number
       model: string
+      projectedCost?: number
       provider: string
       requests: number
       tokens: number
@@ -733,6 +781,7 @@ export type DashboardSnapshot = {
     environment: string
     generatedAt: string
     granularity: DashboardBucketGranularity
+    pricing?: DashboardPricingStatus
     rangeLabel: string
     sourceLabel: string
     summary: string
@@ -741,6 +790,7 @@ export type DashboardSnapshot = {
   issues: DashboardIssue[]
   kpis: Array<{
     label: string
+    note?: string
     tone: 'positive' | 'warning' | 'neutral' | 'negative'
     value: string
   }>
@@ -752,10 +802,12 @@ export type DashboardSnapshot = {
   table: Array<{
     cachedShare: number
     cost: number
+    costDelta?: number
     day: string
     hasData?: boolean
     inputTokens: number
     outputTokens: number
+    projectedCost?: number
     requests: number
     totalTokens: number
     traceId: string

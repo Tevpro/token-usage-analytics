@@ -53,6 +53,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
       rangeLabel: resolved.rangeLabel,
       selectedProjectIds: snapshot.filters.selectedProjectIds,
       sourceLabel: snapshot.headline.sourceLabel,
+      pricingStatus: snapshot.headline.pricing,
       statusNote: snapshot.headline.summary,
       workspaceName: snapshot.headline.workspace,
     })
@@ -81,6 +82,7 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
     rangeLabel: resolved.rangeLabel,
     selectedProjectIds: snapshot.filters.selectedProjectIds,
     sourceLabel: snapshot.headline.sourceLabel,
+    pricingStatus: snapshot.headline.pricing,
     statusNote: snapshot.headline.summary,
     workspaceName: snapshot.headline.workspace,
   })
@@ -125,6 +127,7 @@ function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelS
     const current = modelMap.get(key)
     if (current) {
       current.cost += row.cost
+      current.projectedCost = (current.projectedCost || 0) + (row.projectedCost || 0)
       current.requests += row.requests
       current.tokens += row.tokens
       continue
@@ -133,6 +136,7 @@ function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelS
     modelMap.set(key, {
       cost: row.cost,
       model: row.model,
+      projectedCost: row.projectedCost || 0,
       provider: row.provider,
       requests: row.requests,
       tokens: row.tokens,

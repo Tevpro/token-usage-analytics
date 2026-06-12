@@ -1,4 +1,10 @@
 import { formatHoustonDay, formatHoustonTimestamp } from '#/lib/dashboard-timezone'
+import {
+  ensureModelPricingForReferences,
+  estimateProjectedCostUsd,
+  getModelPricingLookupKey,
+} from '#/lib/public-model-pricing'
+import type { ModelPricingLookupRow } from '#/lib/public-model-pricing'
 import type { CloudflareAppEnv } from '#/lib/runtime'
 import type {
   DashboardIssueByDay,
@@ -27,6 +33,7 @@ type DailyRollupRow = DashboardProjectOption & {
 type ModelSummaryRow = {
   cost: number
   model: string
+  projectedCost?: number
   provider: string
   requests: number
   tokens: number
@@ -527,10 +534,24 @@ async function loadSnapshotFromD1(
     dailyModelRowsByDay.length > 0
       ? dailyModelRowsByDay
       : aggregateModelRowsByDay(hourlyModelRowsByDay)
-  const models =
+  const pricingResult = await ensureModelPricingForReferences(
+    env,
+    resolvedModelRowsByDay.map((row) => ({
+      model: row.model,
+      provider: row.provider,
+      tokens: row.tokens,
+    })),
+  )
+  const enrichedModelRowsByDay = applyProjectedPricingToModelRows(
+    resolvedDailyRows,
+    resolvedModelRowsByDay,
+    pricingResult.lookup,
+  )
+  const enrichedHourlyModelRowsByDay =
     hourlyModelRowsByDay.length > 0
-      ? summarizeModelRows(resolvedModelRowsByDay)
-      : await loadModelSummary(env.DB, workspaceIds, firstDay, lastDay)
+      ? applyProjectedPricingToModelRows(hourlyRows, hourlyModelRowsByDay, pricingResult.lookup)
+      : undefined
+  const models = summarizeModelRows(enrichedModelRowsByDay)
 
   return buildSnapshotFromRollups({
     availableProjects,
@@ -538,12 +559,15 @@ async function loadSnapshotFromD1(
     environment: rows[rows.length - 1].environment,
     generatedAt: new Date(latestCreatedAt).toISOString(),
     hourlyModelRowsByDay:
-      hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : undefined,
+      enrichedHourlyModelRowsByDay && enrichedHourlyModelRowsByDay.length > 0
+        ? enrichedHourlyModelRowsByDay
+        : undefined,
     hourlyRows: hourlyRows.length > 0 ? hourlyRows : undefined,
     issues: summarizeIssues(issuesByDay),
     issuesByDay,
     models,
-    modelRowsByDay: resolvedModelRowsByDay,
+    modelRowsByDay: enrichedModelRowsByDay,
+    pricingStatus: pricingResult.status,
     selectedProjectIds: availableProjects.map((project) => project.projectId),
     sourceLabel,
     statusNote: buildCombinedStatusNote(selections),
@@ -716,7 +740,7 @@ async function loadDailyRollups(
   return result.results
 }
 
-async function loadModelSummary(
+export async function loadModelSummary(
   db: D1Database,
   workspaceIds: string[],
   startDay: string,
@@ -871,6 +895,7 @@ function aggregateModelRowsByDay(rows: DashboardModelDailyUsage[]) {
     const current = rowMap.get(key)
     if (current) {
       current.cost += row.cost
+      current.projectedCost = roundCurrency((current.projectedCost || 0) + (row.projectedCost || 0))
       current.requests += row.requests
       current.tokens += row.tokens
       continue
@@ -885,6 +910,51 @@ function aggregateModelRowsByDay(rows: DashboardModelDailyUsage[]) {
   )
 }
 
+function applyProjectedPricingToModelRows(
+  rollupRows: DailyRollupRow[],
+  modelRows: DashboardModelDailyUsage[],
+  pricingLookup: Map<string, ModelPricingLookupRow>,
+) {
+  const rollupMap = new Map<string, DailyRollupRow>()
+  for (const row of rollupRows) {
+    rollupMap.set(`${row.projectId}:${row.day}`, row)
+  }
+
+  return modelRows.map((row) => {
+    const rollup = rollupMap.get(`${row.projectId}:${row.day}`)
+    if (!rollup || rollup.totalTokens <= 0) {
+      return { ...row, projectedCost: 0 }
+    }
+
+    const estimatedInputTokens = resolveProjectedTokenSlice(rollup.inputTokens, rollup.totalTokens, row.tokens)
+    const estimatedOutputTokens = resolveProjectedTokenSlice(rollup.outputTokens, rollup.totalTokens, row.tokens)
+    const estimatedCachedTokens = resolveProjectedTokenSlice(rollup.cachedTokens, rollup.totalTokens, row.tokens)
+    const pricing = pricingLookup.get(getModelPricingLookupKey(row.model))
+
+    return {
+      ...row,
+      projectedCost: estimateProjectedCostUsd({
+        cacheReadInputTokens: estimatedCachedTokens,
+        inputTokens: estimatedInputTokens,
+        outputTokens: estimatedOutputTokens,
+        pricing,
+      }),
+    }
+  })
+}
+
+function resolveProjectedTokenSlice(
+  bucketTokens: number,
+  bucketTotalTokens: number,
+  modelTokens: number,
+) {
+  if (bucketTokens <= 0 || bucketTotalTokens <= 0 || modelTokens <= 0) {
+    return 0
+  }
+
+  return Math.max(0, Math.round(modelTokens * Math.min(1, bucketTokens / bucketTotalTokens)))
+}
+
 function summarizeModelRows(rows: DashboardModelDailyUsage[]) {
   const modelMap = new Map<string, ModelSummaryRow>()
 
@@ -893,6 +963,7 @@ function summarizeModelRows(rows: DashboardModelDailyUsage[]) {
     const current = modelMap.get(key)
     if (current) {
       current.cost += row.cost
+      current.projectedCost = roundCurrency((current.projectedCost || 0) + (row.projectedCost || 0))
       current.requests += row.requests
       current.tokens += row.tokens
       continue
@@ -901,6 +972,7 @@ function summarizeModelRows(rows: DashboardModelDailyUsage[]) {
     modelMap.set(key, {
       cost: row.cost,
       model: row.model,
+      projectedCost: row.projectedCost || 0,
       provider: row.provider,
       requests: row.requests,
       tokens: row.tokens,
