@@ -43,6 +43,25 @@ Before you start, confirm:
 
 ## Step 1. Install the plugin into the Hermes checkout
 
+> [!WARNING]
+> This repository is a monorepo. The Hermes plugin is **not** at the repo root.
+> Do **not** install the repo root directly with `hermes plugins install <repo-url>`.
+> The actual plugin source lives at `plugins/hermes-token-analytics/`.
+
+### Install target options
+
+There are two valid install targets. They are not the same thing.
+
+1. **Bundled checkout plugin path**, for development inside a Hermes repo checkout
+   - target root: `~/.hermes/hermes-agent`
+   - resulting plugin path: `~/.hermes/hermes-agent/plugins/hermes-token-analytics/`
+2. **User plugin path**, preferred for a normal operator install
+   - resulting plugin path: `~/.hermes/plugins/hermes-token-analytics/`
+
+Preferred default: use the **user plugin path** unless you are intentionally working inside a bundled Hermes checkout.
+
+### Bundled checkout install
+
 From this repo root, copy the plugin into the target Hermes checkout:
 
 ```bash
@@ -67,12 +86,34 @@ What the helper does:
 - writes a compatibility shim at `plugins/observability/token_analytics/`
 - lets older `plugins.enabled` entries keep working during migration
 
+### User plugin install
+
+If you are doing a normal user-level install instead of editing a Hermes checkout in place, copy this repo subdirectory into:
+
+```text
+~/.hermes/plugins/hermes-token-analytics
+```
+
+Use the contents of:
+
+```text
+plugins/hermes-token-analytics/
+```
+
+The main operational point is simple: copy the plugin directory, not the monorepo root.
+
 ## Step 2. Enable the plugin in Hermes
 
 Enable the plugin by its path-derived key:
 
 ```bash
 hermes plugins enable hermes-token-analytics
+```
+
+Then restart the gateway so Hermes reloads the plugin command surface:
+
+```bash
+hermes gateway restart
 ```
 
 Then verify Hermes sees it:
@@ -84,6 +125,7 @@ hermes plugins list
 What you want to see:
 
 - `hermes-token-analytics` listed as enabled
+- the plugin commands available after the restart
 
 If the target install still references the old compatibility path, the shim also supports the legacy key:
 
@@ -156,6 +198,10 @@ What success looks like:
 - `show-config` shows the resolved endpoint, workspace fields, and redacted shared secret
 - `sync` posts successfully to `/api/ingest/hermes-usage`
 
+Important: a successful `hermes token-analytics sync` only proves the plugin works manually.
+It does **not** mean continuous reporting is active.
+Continuous reporting requires a cron job.
+
 If `sync` fails, stop here and fix config before adding cron.
 
 ## Step 5. Create the scheduled job
@@ -213,6 +259,19 @@ Confirm:
 - the job is enabled
 - the schedule is correct
 - the cron-triggered run behaves the same as the manual `sync`
+
+## Production readiness checklist
+
+- [ ] plugin copied from `plugins/hermes-token-analytics/` into the intended install target
+- [ ] plugin enabled
+- [ ] gateway restarted
+- [ ] `hermes token-analytics doctor` passes
+- [ ] `hermes token-analytics show-config` is correct
+- [ ] `hermes token-analytics sync` succeeds
+- [ ] `hermes token-analytics install-cron-wrapper` run
+- [ ] cron job created
+- [ ] `hermes cron list --all` shows `token-analytics-sync`
+- [ ] one cron-triggered run verified
 
 ## Normal operating procedure
 

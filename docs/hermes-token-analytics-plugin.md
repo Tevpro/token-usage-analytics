@@ -4,20 +4,27 @@
 
 This integration is now a **Hermes-native Python plugin**, not a Node or bash sidecar.
 
+> [!WARNING]
+> This repository is a monorepo. The Hermes plugin is **not** at the repo root.
+> Do **not** install the repo root directly with `hermes plugins install <repo-url>`.
+> The actual plugin source lives at `plugins/hermes-token-analytics/`.
+
 Operator setup is:
 
-1. Set the Cloudflare Worker secret `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`.
-2. Export the plugin env vars shown below.
-3. Validate the install with:
+1. Copy `plugins/hermes-token-analytics/` into the correct install target.
+2. Enable the plugin and restart the Hermes gateway.
+3. Set the Cloudflare Worker secret `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`.
+4. Export the plugin env vars shown below.
+5. Validate the install with:
    ```bash
    hermes token-analytics doctor
    hermes token-analytics show-config
    ```
-4. Push one manual sync:
+6. Push one manual sync:
    ```bash
    hermes token-analytics sync
    ```
-5. Let **Hermes cron own the schedule** by creating a single cron job that runs the sync command on a cadence such as every 15 minutes. That one job covers both rollups and heartbeat freshness.
+7. Let **Hermes cron own the schedule** by creating a single cron job that runs the sync command on a cadence such as every 15 minutes. That one job covers both rollups and heartbeat freshness.
 
 If you just need the exact install sequence, use:
 
@@ -46,6 +53,18 @@ This repo is the dashboard and ingest target. The operator-facing runtime is the
 
 For local Hermes checkout installs, the helper now copies the plugin into `plugins/hermes-token-analytics/` and also writes a legacy compatibility shim at `plugins/observability/token_analytics/` so existing enabled-plugin configs do not break mid-upgrade.
 
+## Common operational failure modes
+
+When operators report that token analytics is "not working," the failure is often in the workflow, not the plugin logic.
+
+The main causes are:
+
+- using the monorepo root instead of `plugins/hermes-token-analytics/`
+- enabling the plugin without restarting the Hermes gateway
+- proving only that a manual sync works, without creating a cron job for continuous reporting
+
+Manual sync working is useful, but it is not the same thing as production readiness.
+
 ## Architecture and ownership
 
 ### Hermes-native plugin, not a sidecar
@@ -71,6 +90,28 @@ UI note: the dashboard may refer to these imported workspaces as **Agents** in u
 
 If a sync is running at the wrong time, fix Hermes cron.
 If a sync is reading the wrong DB or posting to the wrong workspace, fix plugin config.
+
+### Install target choices
+
+There are two supported install targets:
+
+1. **Bundled checkout path**
+   - use this when you are editing a Hermes repo checkout directly
+   - plugin lives under `~/.hermes/hermes-agent/plugins/hermes-token-analytics/`
+2. **User plugin path**, preferred for normal operator installs
+   - plugin lives under `~/.hermes/plugins/hermes-token-analytics/`
+
+If both are technically available, prefer the **user plugin path** unless you specifically need the plugin to live inside a Hermes checkout for development.
+
+### Gateway reload requirement
+
+After `hermes plugins enable hermes-token-analytics`, run:
+
+```bash
+hermes gateway restart
+```
+
+Without the restart, Hermes may still be running without the newly enabled plugin command surface.
 
 ## Required Worker-side configuration
 
@@ -205,6 +246,10 @@ A successful run should:
 3. `POST` the payload to the Worker endpoint
 4. receive a successful response from the ingest route
 5. make the imported workspace visible in the dashboard
+
+A successful manual `hermes token-analytics sync` only proves that the plugin works in the foreground.
+It does **not** prove that continuous reporting is active.
+Continuous reporting requires a Hermes cron job.
 
 ### `hermes token-analytics install-cron-wrapper`
 
