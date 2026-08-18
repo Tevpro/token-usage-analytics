@@ -147,8 +147,10 @@ class FakeD1Database {
       return [...this.workspaces.values()]
         .map((workspace) => {
           const rollups = this.dailyRollups.filter((row) => row.projectId === workspace.id)
-          const latestRollup = [...rollups].sort((left, right) => right.createdAt - left.createdAt)[0]
-          const latestCreatedAt = workspace.lastIngestedAt ?? latestRollup?.createdAt ?? workspace.createdAt
+          const latestRollup = ([...rollups].sort((left, right) => right.createdAt - left.createdAt)[0] ?? null) as
+            | (typeof this.dailyRollups)[number]
+            | null
+          const latestCreatedAt = (workspace.lastIngestedAt as number | null | undefined) ?? latestRollup?.createdAt ?? workspace.createdAt
           const latestDay = latestRollup?.day ?? null
           return {
             id: workspace.id,

@@ -85,9 +85,9 @@ export function getAggregateAgentDataStatus(
 
   if (projects.length === 1) {
     const [project] = projects
-    return getAgentDataStatus(project?.latestGeneratedAt || '', {
+    return getAgentDataStatus(project.latestGeneratedAt || '', {
       expectedUpdateIntervalMs: options?.expectedUpdateIntervalMs,
-      latestRollupDay: project?.latestRollupDay || undefined,
+      latestRollupDay: project.latestRollupDay || undefined,
       now: options?.now,
     })
   }
