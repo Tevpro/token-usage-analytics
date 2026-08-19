@@ -35,9 +35,9 @@ Use Cloudflare Workers for the app runtime, D1 for durable rollups, TanStack Sta
 - README and deployment docs
 
 **Verification:**
-- `npm run typecheck`
-- `npm run lint`
-- `npm run build`
+- `nub run typecheck`
+- `nub run lint`
+- `nub run build`
 
 ---
 

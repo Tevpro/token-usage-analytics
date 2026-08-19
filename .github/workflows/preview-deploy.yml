@@ -36,21 +36,24 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: apps/dashboard/package-lock.json
+
+      - name: Setup Nub
+        run: |
+          NUB_NO_MODIFY_PATH=1 curl -fsSL https://nubjs.com/install.sh | bash
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
-        run: npm ci
+        run: nub install --frozen-lockfile
 
       - name: Build app
-        run: npm run build
+        run: nub run build
 
       - name: Deploy PR preview worker
         id: deploy
         run: |
           deploy_log=$(mktemp)
 
-          npx wrangler deploy \
+          nubx wrangler deploy \
             --name token-usage-analytics-pr-${{ github.event.pull_request.number }} \
             --var 'APP_ENV:preview' 2>&1 | tee "$deploy_log"
 

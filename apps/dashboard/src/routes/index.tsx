@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   Bot,
   CalendarRange,
+  Github,
   RefreshCcw,
 } from 'lucide-react'
 
@@ -244,6 +245,25 @@ function Home() {
 
   return (
     <main className="dashboard-shell">
+      <div className="dashboard-github-link-corner">
+        <Button
+          aria-label="Open token usage analytics repository on GitHub"
+          asChild
+          className="dashboard-github-link"
+          size="icon"
+          variant="outline"
+        >
+          <a
+            href="https://github.com/Tevpro/token-usage-analytics"
+            rel="noreferrer"
+            target="_blank"
+            title="Open GitHub repository"
+          >
+            <Github className="size-4" />
+          </a>
+        </Button>
+      </div>
+
       <section className="dashboard-header">
         <div className="space-y-5">
           <div className="space-y-2">

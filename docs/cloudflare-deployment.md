@@ -9,14 +9,14 @@ All app, Wrangler, and D1 commands should be run from that directory.
 
 ```bash
 cd apps/dashboard
-npm ci
+nub install --frozen-lockfile
 ```
 
 ## 2. Authenticate Wrangler
 
 ```bash
-npx wrangler login
-npx wrangler whoami
+nubx wrangler login
+nubx wrangler whoami
 ```
 
 ## 3. Verify the D1 binding
@@ -30,31 +30,31 @@ Make sure the committed `d1_databases[0].database_id` is the right database for 
 ## 4. Generate types
 
 ```bash
-npm run cf:typegen
+nub run cf:typegen
 ```
 
 ## 5. Apply migrations locally
 
 ```bash
-npm run cf:d1:migrate:local
+nub run cf:d1:migrate:local
 ```
 
 ## 6. Apply migrations remotely
 
 ```bash
-npm run cf:d1:migrate:remote
+nub run cf:d1:migrate:remote
 ```
 
 ## 7. Run the app locally
 
 ```bash
-npm run dev
+nub run dev
 ```
 
 ## 8. Deploy manually
 
 ```bash
-npm run deploy
+nub run deploy
 ```
 
 ## 9. GitHub Actions deployment

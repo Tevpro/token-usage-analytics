@@ -313,7 +313,7 @@ mkdirSync(tempDir, { recursive: true })
 writeFileSync(sqlFile, buildSql())
 
 console.log('Applying local D1 migrations...')
-run('npm', ['run', 'cf:d1:migrate:local'])
+run('nub', ['run', 'cf:d1:migrate:local'])
 console.log('Seeding local D1 demo data...')
 run(wranglerBin, ['d1', 'execute', databaseName, '--local', '--file', sqlFile])
 console.log('Verifying local D1 seed summary...')
@@ -325,4 +325,4 @@ run(wranglerBin, [
   '--command',
   'SELECT COUNT(*) AS workspaces FROM workspaces; SELECT COUNT(*) AS rollups FROM daily_usage_rollups; SELECT COUNT(*) AS model_rows FROM model_daily_usage; SELECT COUNT(*) AS tool_rows FROM tool_daily_usage; SELECT COUNT(*) AS issues FROM issue_events;',
 ])
-console.log('\nLocal D1 bootstrap complete. You can now run `npm run dev`.')
+console.log('\nLocal D1 bootstrap complete. You can now run `nub run dev`.')
