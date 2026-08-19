@@ -111,6 +111,7 @@
 }
 
 .dashboard-shell {
+  position: relative;
   margin: 0 auto;
   width: min(1380px, calc(100% - 32px));
   padding: 22px 0 40px;
@@ -200,6 +201,22 @@
 }
 
 .dashboard-feedback-button {
+  border-radius: 14px;
+  border-color: var(--border);
+  background: white;
+  color: #111827;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.dashboard-github-link-corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 1rem;
+  z-index: 10;
+}
+
+.dashboard-github-link {
   border-radius: 14px;
   border-color: var(--border);
   background: white;
