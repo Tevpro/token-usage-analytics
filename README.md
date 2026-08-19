@@ -54,18 +54,18 @@ docs/
 Run these from `apps/dashboard/`:
 
 ```bash
-npm ci
-npm run dev
-npm run typecheck
-npm run lint
-npm run build
-npm run cf:d1:migrate:local
-npm run cf:d1:bootstrap:local
-npm run cf:d1:migrate:remote
-npm run deploy
+nub install --frozen-lockfile
+nub run dev
+nub run typecheck
+nub run lint
+nub run build
+nub run cf:d1:migrate:local
+nub run cf:d1:bootstrap:local
+nub run cf:d1:migrate:remote
+nub run deploy
 ```
 
-If a fresh worktree has no local D1 data yet, run `npm run cf:d1:bootstrap:local` before `npm run dev`. It applies local migrations, wipes/reseeds the demo workspaces, and inserts recent daily plus hourly sample data so the dashboard renders immediately.
+If a fresh worktree has no local D1 data yet, run `nub run cf:d1:bootstrap:local` before `nub run dev`. It applies local migrations, wipes/reseeds the demo workspaces, and inserts recent daily plus hourly sample data so the dashboard renders immediately.
 
 ## Hermes plugin source
 

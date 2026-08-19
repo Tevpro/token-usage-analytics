@@ -34,10 +34,11 @@ Runs when files under these paths change:
 
 Validation steps:
 
-1. `npm ci`
-2. `npm run typecheck`
-3. `npm run lint`
-4. `npm run build`
+1. install Nub from `https://nubjs.com/install.sh`
+2. `nub install --frozen-lockfile`
+3. `nub run typecheck`
+4. `nub run lint`
+5. `nub run build`
 
 ### Hermes plugin validation
 
