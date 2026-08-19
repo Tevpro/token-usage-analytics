@@ -122,8 +122,10 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const topDayByTokens = [...aggregatedDailyRows].sort((left, right) => right.totalTokens - left.totalTokens).at(0)
   const topDayByCost = [...aggregatedDailyRows].sort((left, right) => right.cost - left.cost).at(0)
   const bucketLabel = granularity === 'hour' ? 'hour' : 'day'
-  const availableStartDay = aggregatedDailyRows[0]?.day || ''
-  const availableEndDay = aggregatedDailyRows.at(-1)?.day || ''
+  const availableStartDay =
+    aggregatedDailyRows[0]?.day || input.bucketWindowStart || ''
+  const availableEndDay =
+    aggregatedDailyRows.at(-1)?.day || input.bucketWindowEnd || ''
   const availableProjects = resolveAvailableProjects(input.availableProjects, input.dailyRows)
   const resolvedSelectedProjectIds = resolveSelectedProjectIds(availableProjects, input.selectedProjectIds)
   const projectBreakdown = summarizeProjects(input.dailyRows, availableProjects, resolvedSelectedProjectIds)

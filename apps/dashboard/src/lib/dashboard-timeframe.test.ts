@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { filterSnapshotByTimeframe, resolveTimeframeSelection } from '#/lib/dashboard-timeframe'
+import {
+  filterSnapshotByTimeframe,
+  normalizeDashboardQuerySelection,
+  resolveTimeframeSelection,
+} from '#/lib/dashboard-timeframe'
 import { buildSnapshotFromRollups } from '#/lib/token-analytics'
 
 const snapshot = buildSnapshotFromRollups({
@@ -37,6 +41,39 @@ const snapshot = buildSnapshotFromRollups({
 })
 
 describe('dashboard timeframe filtering', () => {
+  it('normalizes URL search into the date selection sent to the D1 loader', () => {
+    expect(normalizeDashboardQuerySelection({})).toEqual({ preset: '30d' })
+    expect(
+      normalizeDashboardQuerySelection({
+        endDay: '2026-05-30',
+        preset: 'custom',
+        startDay: '2025-01-01',
+      }),
+    ).toEqual({
+      endDay: '2026-05-30',
+      preset: 'custom',
+      startDay: '2025-01-01',
+    })
+    expect(
+      normalizeDashboardQuerySelection({
+        endDay: '2026-02-30',
+        preset: 'custom',
+        startDay: '2026-13-01',
+      }),
+    ).toEqual({
+      endDay: undefined,
+      preset: 'custom',
+      startDay: undefined,
+    })
+    expect(
+      normalizeDashboardQuerySelection({
+        endDay: '2026-05-30',
+        preset: '7d',
+        startDay: '2025-01-01',
+      }),
+    ).toEqual({ preset: '7d' })
+  })
+
   it('filters a custom date window and recomputes totals, models, and issues', () => {
     const filtered = filterSnapshotByTimeframe(snapshot, {
       endDay: '2026-05-03',

@@ -59,6 +59,7 @@ class FakePreparedStatement {
   }
 
   async all<T>() {
+    this.db.selects.push({ params: this.params, sql: this.sql })
     return { results: this.db.selectAll(this.sql, this.params) as T[] }
   }
 
@@ -71,6 +72,7 @@ class FakePreparedStatement {
 
 class FakeD1Database {
   runs: BoundStatement[] = []
+  selects: BoundStatement[] = []
   batches: BoundStatement[][] = []
   workspaces = new Map<string, WorkspaceRow>()
   dailyRollups: DailyRollupStoredRow[] = []
@@ -172,10 +174,18 @@ class FakeD1Database {
     }
 
     if (sql.includes('FROM daily_usage_rollups') && sql.includes('workspaces.name as projectName')) {
-      const workspaceIds = params.slice(0, -1) as string[]
-      const [startDay] = params.slice(-1) as [string]
+      const hasEndDay = sql.includes('daily_usage_rollups.usage_date < ?')
+      const workspaceIds = params.slice(0, hasEndDay ? -2 : -1) as string[]
+      const [startDay, endDayExclusive] = hasEndDay
+        ? (params.slice(-2) as [string, string])
+        : ([params.at(-1), '9999-12-31'] as [string, string])
       return this.dailyRollups
-        .filter((row) => workspaceIds.includes(row.projectId) && row.day >= startDay)
+        .filter(
+          (row) =>
+            workspaceIds.includes(row.projectId) &&
+            row.day >= startDay &&
+            row.day < endDayExclusive,
+        )
         .map((row) => {
           const workspace = this.workspaces.get(row.projectId)!
           return {
@@ -343,6 +353,9 @@ describe('ingestExternalRollupsToD1', () => {
   })
 
   it('preserves Hermes hourly rollups through D1 loading into the 24h dashboard view', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-23T12:00:00Z'))
+
     const db = new FakeD1Database()
     const env = {
       APP_ENV: 'production',
@@ -426,6 +439,119 @@ describe('ingestExternalRollupsToD1', () => {
       expect.objectContaining({ model: 'gpt-5.4', provider: 'Hermes', requests: 5, tokens: 520 }),
       expect.objectContaining({ model: 'claude-sonnet-4', provider: 'Hermes', requests: 4, tokens: 410 }),
     ])
+  })
+
+  it('queries the D1 range selected by the dashboard instead of a fixed history window', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-19T12:00:00Z'))
+
+    const db = new FakeD1Database()
+    const workspaceId = 'workspace:hermes-usage'
+    const endDay = new Date('2026-08-19T00:00:00Z')
+    db.workspaces.set(workspaceId, {
+      createdAt: endDay.getTime(),
+      id: workspaceId,
+      lastIngestedAt: endDay.getTime(),
+      name: 'Hermes Usage',
+      provider: 'Hermes',
+      slug: 'hermes-usage',
+    })
+    db.dailyRollups = Array.from({ length: 120 }, (_, index) => {
+      const date = new Date(endDay)
+      date.setUTCDate(date.getUTCDate() - (119 - index))
+      const day = date.toISOString().slice(0, 10)
+      return {
+        cachedTokens: 10,
+        cost: 1,
+        createdAt: date.getTime(),
+        day,
+        environment: 'production',
+        id: `${workspaceId}:${day}`,
+        inputTokens: 100,
+        outputTokens: 20,
+        p95LatencyMs: 0,
+        projectId: workspaceId,
+        requests: 1,
+        totalTokens: 120,
+      }
+    })
+
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+      OPENAI_USAGE_DAYS_BACK: '7',
+    } satisfies CloudflareAppEnv
+    const customStartDay = db.dailyRollups[10].day
+    const customEndDay = db.dailyRollups[109].day
+
+    const defaultResult = await loadDashboardSnapshotForRequest(env)
+    const sevenDayResult = await loadDashboardSnapshotForRequest(env, { preset: '7d' })
+    const ninetyDayResult = await loadDashboardSnapshotForRequest(env, { preset: '90d' })
+    const customResult = await loadDashboardSnapshotForRequest(env, {
+      endDay: customEndDay,
+      preset: 'custom',
+      startDay: customStartDay,
+    })
+
+    expect(defaultResult.snapshot.filters.dailyRows).toHaveLength(30)
+    expect(sevenDayResult.snapshot.filters.dailyRows).toHaveLength(7)
+    expect(ninetyDayResult.snapshot.filters.dailyRows).toHaveLength(90)
+    expect(customResult.snapshot.filters.dailyRows).toHaveLength(100)
+    expect(customResult.snapshot.filters.availableStartDay).toBe(customStartDay)
+    expect(customResult.snapshot.filters.availableEndDay).toBe(customEndDay)
+  })
+
+  it('preserves an empty future custom range without querying outside it', async () => {
+    const db = new FakeD1Database()
+    const workspaceId = 'workspace:hermes-usage'
+    const latestDay = '2026-08-19'
+    db.workspaces.set(workspaceId, {
+      createdAt: Date.parse(`${latestDay}T12:00:00Z`),
+      id: workspaceId,
+      lastIngestedAt: Date.parse(`${latestDay}T12:00:00Z`),
+      name: 'Hermes Usage',
+      provider: 'Hermes',
+      slug: 'hermes-usage',
+    })
+    db.dailyRollups = [
+      {
+        cachedTokens: 10,
+        cost: 1,
+        createdAt: Date.parse(`${latestDay}T12:00:00Z`),
+        day: latestDay,
+        environment: 'production',
+        id: `${workspaceId}:${latestDay}`,
+        inputTokens: 100,
+        outputTokens: 20,
+        p95LatencyMs: 0,
+        projectId: workspaceId,
+        requests: 1,
+        totalTokens: 120,
+      },
+    ]
+
+    const result = await loadDashboardSnapshotForRequest(
+      { APP_ENV: 'production', DB: db as unknown as D1Database },
+      {
+        endDay: '2027-01-31',
+        preset: 'custom',
+        startDay: '2027-01-01',
+      },
+    )
+    const rangeSelect = [...db.selects]
+      .reverse()
+      .find((statement) =>
+        statement.sql.includes('daily_usage_rollups.environment as environment'),
+      )
+
+    expect(rangeSelect?.params.slice(-2)).toEqual([
+      '2027-01-01',
+      '2027-02-01',
+    ])
+    expect(result.snapshot.filters.availableStartDay).toBe('2027-01-01')
+    expect(result.snapshot.filters.availableEndDay).toBe('2027-01-31')
+    expect(result.snapshot.filters.dailyRows).toEqual([])
+    expect(result.snapshot.table).toEqual([])
   })
 
   it('accepts heartbeat-only payloads without rollups', async () => {

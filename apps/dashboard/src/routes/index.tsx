@@ -41,7 +41,11 @@ import {
 import { getAgentDataStatus, getAggregateAgentDataStatus } from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
 import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
-import { filterSnapshotByTimeframe } from '#/lib/dashboard-timeframe'
+import {
+  filterSnapshotByTimeframe,
+  isValidIsoDay,
+  normalizeDashboardQuerySelection,
+} from '#/lib/dashboard-timeframe'
 import type {
   TimeframePreset,
   TimeframeSelection,
@@ -53,17 +57,18 @@ import type {
   DashboardSnapshot,
 } from '#/lib/token-analytics'
 
-const getDashboardSnapshot = createServerFn({ method: 'GET' }).handler(
-  async () => {
+const getDashboardSnapshot = createServerFn({ method: 'GET' })
+  .inputValidator(normalizeDashboardQuerySelection)
+  .handler(async ({ data }) => {
     const { getRuntimeEnv } = await import('#/lib/worker-env')
-    const result = await loadDashboardSnapshotForRequest(getRuntimeEnv())
+    const result = await loadDashboardSnapshotForRequest(getRuntimeEnv(), data)
     return result.snapshot
-  },
-)
+  })
 
 export const Route = createFileRoute('/')({
   validateSearch: (search) => parseDashboardSearch(search),
-  loader: async () => getDashboardSnapshot(),
+  loaderDeps: ({ search }) => normalizeDashboardQuerySelection(search),
+  loader: async ({ deps }) => getDashboardSnapshot({ data: deps }),
   component: Home,
 })
 
@@ -362,10 +367,6 @@ function Home() {
               <Input
                 aria-label="Start date"
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
-                max={
-                  timeframe.endDay || projectSnapshot.filters.availableEndDay
-                }
-                min={projectSnapshot.filters.availableStartDay}
                 onChange={(event) =>
                   updateSearch({
                     endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
@@ -383,7 +384,6 @@ function Home() {
               <Input
                 aria-label="End date"
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
-                max={projectSnapshot.filters.availableEndDay}
                 min={
                   timeframe.startDay ||
                   projectSnapshot.filters.availableStartDay
@@ -1571,16 +1571,10 @@ function sanitizeDashboardSearch(
   const endDay = getIsoDayParam(search.endDay)
 
   return {
-    endDay:
-      normalizedPreset === 'custom' && endDay !== defaultTimeframe.endDay
-        ? endDay
-        : undefined,
-    preset: normalizedPreset !== defaultTimeframe.preset ? normalizedPreset : undefined,
+    endDay: normalizedPreset === 'custom' ? endDay : undefined,
+    preset: normalizedPreset !== '30d' ? normalizedPreset : undefined,
     projects,
-    startDay:
-      normalizedPreset === 'custom' && startDay !== defaultTimeframe.startDay
-        ? startDay
-        : undefined,
+    startDay: normalizedPreset === 'custom' ? startDay : undefined,
     tab: search.tab && search.tab !== 'overview' ? search.tab : undefined,
     trafficMode: search.trafficMode === 'line' ? 'line' : undefined,
   }
@@ -1601,7 +1595,7 @@ function getTimeframePresetParam(value: unknown): TimeframePreset | undefined {
 }
 
 function getIsoDayParam(value: unknown) {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : undefined
+  return isValidIsoDay(value) ? value : undefined
 }
 
 function getProjectsParam(value: unknown) {

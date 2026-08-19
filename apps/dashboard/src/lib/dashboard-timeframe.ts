@@ -28,6 +28,31 @@ const PRESET_DAY_COUNTS: Record<Exclude<TimeframePreset, 'custom'>, number> = {
   '90d': 90,
 }
 
+export function normalizeDashboardQuerySelection(
+  selection: Partial<TimeframeSelection> | undefined,
+): TimeframeSelection {
+  const preset = isTimeframePreset(selection?.preset)
+    ? selection.preset
+    : '30d'
+
+  if (preset !== 'custom') {
+    return { preset }
+  }
+
+  const startDay = isValidIsoDay(selection?.startDay)
+    ? selection.startDay
+    : undefined
+  const endDay = isValidIsoDay(selection?.endDay)
+    ? selection.endDay
+    : undefined
+
+  return {
+    endDay,
+    preset,
+    startDay,
+  }
+}
+
 export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection: TimeframeSelection): DashboardSnapshot {
   const resolved = resolveTimeframeSelection(snapshot, selection)
 
@@ -203,4 +228,26 @@ function formatDay(value: string) {
     timeZone: 'UTC',
     year: 'numeric',
   }).format(new Date(`${value}T00:00:00Z`))
+}
+
+function isTimeframePreset(value: unknown): value is TimeframePreset {
+  return (
+    value === '24h' ||
+    value === '7d' ||
+    value === '30d' ||
+    value === '90d' ||
+    value === 'custom'
+  )
+}
+
+export function isValidIsoDay(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false
+  }
+
+  const parsed = new Date(`${value}T00:00:00Z`)
+  return (
+    !Number.isNaN(parsed.getTime()) &&
+    parsed.toISOString().slice(0, 10) === value
+  )
 }
