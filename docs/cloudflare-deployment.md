@@ -27,6 +27,11 @@ Check:
 
 Make sure the committed `d1_databases[0].database_id` is the right database for the environment you intend to deploy.
 
+Dashboard reads are driven by the selected URL timeframe. The standard presets query
+their matching D1 window, while `preset=custom&startDay=YYYY-MM-DD&endDay=YYYY-MM-DD`
+queries that exact date range. `OPENAI_USAGE_DAYS_BACK` controls only the optional
+OpenAI synchronization window; it does not limit dashboard reads.
+
 ## 4. Generate types
 
 ```bash

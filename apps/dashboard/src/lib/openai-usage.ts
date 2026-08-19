@@ -1,4 +1,6 @@
 import { formatHoustonDay, formatHoustonTimestamp } from '#/lib/dashboard-timezone'
+import { isValidIsoDay } from '#/lib/dashboard-timeframe'
+import type { TimeframeSelection } from '#/lib/dashboard-timeframe'
 import type { CloudflareAppEnv } from '#/lib/runtime'
 import type {
   DashboardIssueByDay,
@@ -162,17 +164,22 @@ export type ExternalIngestPayload = {
   }
 }
 
-const DEFAULT_DAYS_BACK = 30
+const DEFAULT_OPENAI_DAYS_BACK = 30
 const FRESHNESS_WINDOW_MS = 2 * 60 * 60 * 1000
 const MAX_ROLLUP_DAY_LAG_DAYS = 1
 const OPENAI_PROVIDER = 'OpenAI'
 
 export async function loadDashboardSnapshotForRequest(
   env: CloudflareAppEnv,
+  timeframe: TimeframeSelection = { preset: '30d' },
 ): Promise<SnapshotLoadResult> {
   const selectedWorkspaces = await selectDashboardWorkspaces(env)
   if (selectedWorkspaces.length > 0) {
-    const snapshot = await loadSnapshotFromD1(env, selectedWorkspaces)
+    const snapshot = await loadSnapshotFromD1(
+      env,
+      selectedWorkspaces,
+      resolveDashboardQueryRange(selectedWorkspaces, timeframe),
+    )
     return { snapshot }
   }
 
@@ -187,6 +194,7 @@ export async function loadDashboardSnapshotForRequest(
         const snapshot = await loadSnapshotFromD1(
           env,
           workspaces,
+          resolveDashboardQueryRange(workspaces, timeframe),
           syncResult.sourceLabel,
         )
         return { snapshot, syncResult }
@@ -317,7 +325,7 @@ export async function syncOpenAiUsageToD1(
   const workspace = getOpenAiWorkspaceConfig(env)
   const environment =
     env.OPENAI_USAGE_ENVIRONMENT || env.APP_ENV || 'production'
-  const daysBack = getDaysBack(env)
+  const daysBack = getOpenAiDaysBack(env)
   const now = new Date()
   const startDay = shiftUtcDay(formatUtcDay(now), -(daysBack - 1))
   const startTime = Math.floor(
@@ -466,10 +474,16 @@ export async function syncOpenAiUsageToD1(
 async function loadSnapshotFromD1(
   env: CloudflareAppEnv,
   selections: WorkspaceSelection[],
+  queryRange: { endDay: string; startDay: string },
   sourceLabel = buildCombinedSourceLabel(selections),
 ): Promise<DashboardSnapshot> {
   const workspaceIds = selections.map((selection) => selection.workspace.id)
-  const rows = await loadDailyRollups(env.DB, workspaceIds, getDaysBack(env))
+  const rows = await loadDailyRollups(
+    env.DB,
+    workspaceIds,
+    queryRange.startDay,
+    queryRange.endDay,
+  )
   const availableProjects = selections.map(({ latestCreatedAt, latestDay, workspace }) => ({
     latestGeneratedAt: new Date(latestCreatedAt).toISOString(),
     latestRollupDay: latestDay,
@@ -680,13 +694,14 @@ function buildHeartbeatOnlySnapshot(input: {
 async function loadDailyRollups(
   db: D1Database,
   workspaceIds: string[],
-  daysBack: number,
+  startDay: string,
+  endDay: string,
 ) {
   if (workspaceIds.length === 0) {
     return [] satisfies DailyRollupRow[]
   }
 
-  const startDay = shiftUtcDay(formatUtcDay(new Date()), -(daysBack - 1))
+  const endDayExclusive = shiftUtcDay(endDay, 1)
   const placeholders = workspaceIds.map(() => '?').join(', ')
   const result = await db
     .prepare(
@@ -708,9 +723,10 @@ async function loadDailyRollups(
        INNER JOIN workspaces ON workspaces.id = daily_usage_rollups.workspace_id
        WHERE daily_usage_rollups.workspace_id IN (${placeholders})
          AND daily_usage_rollups.usage_date >= ?
+         AND daily_usage_rollups.usage_date < ?
        ORDER BY daily_usage_rollups.usage_date ASC, workspaces.name ASC`,
     )
-    .bind(...workspaceIds, startDay)
+    .bind(...workspaceIds, startDay, endDayExclusive)
     .all<DailyRollupRow>()
 
   return result.results
@@ -1213,13 +1229,53 @@ function getExternalWorkspaceConfig(
   }
 }
 
-function getDaysBack(env: CloudflareAppEnv) {
-  const parsed = Number.parseInt(
-    env.OPENAI_USAGE_DAYS_BACK || `${DEFAULT_DAYS_BACK}`,
-    10,
-  )
+function getOpenAiDaysBack(env: CloudflareAppEnv) {
+  return parseDaysBack(env.OPENAI_USAGE_DAYS_BACK, DEFAULT_OPENAI_DAYS_BACK)
+}
+
+function resolveDashboardQueryRange(
+  selections: WorkspaceSelection[],
+  timeframe: TimeframeSelection,
+) {
+  const latestDay =
+    selections
+      .map((selection) => selection.latestDay?.slice(0, 10) || '')
+      .filter(Boolean)
+      .sort()
+      .at(-1) || formatUtcDay(new Date())
+  const requestedEndDay = isValidIsoDay(timeframe.endDay)
+    ? timeframe.endDay
+    : latestDay
+  const endDay = requestedEndDay < latestDay ? requestedEndDay : latestDay
+
+  if (timeframe.preset === 'custom') {
+    const requestedStartDay = isValidIsoDay(timeframe.startDay)
+      ? timeframe.startDay
+      : shiftUtcDay(endDay, -29)
+    return requestedStartDay <= endDay
+      ? { endDay, startDay: requestedStartDay }
+      : { endDay: requestedStartDay, startDay: endDay }
+  }
+
+  const daysBack =
+    timeframe.preset === '24h'
+      ? 2
+      : timeframe.preset === '7d'
+        ? 7
+        : timeframe.preset === '90d'
+          ? 90
+          : 30
+
+  return {
+    endDay,
+    startDay: shiftUtcDay(endDay, -(daysBack - 1)),
+  }
+}
+
+function parseDaysBack(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value || `${fallback}`, 10)
   if (Number.isNaN(parsed)) {
-    return DEFAULT_DAYS_BACK
+    return fallback
   }
   return Math.min(Math.max(parsed, 7), 90)
 }
