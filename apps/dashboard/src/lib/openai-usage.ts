@@ -501,9 +501,23 @@ async function loadSnapshotFromD1(
   )
 
   if (rows.length === 0) {
-    return buildHeartbeatOnlySnapshot({
+    if (selections.every((selection) => !selection.latestDay)) {
+      return buildHeartbeatOnlySnapshot({
+        availableProjects,
+        generatedAt: new Date(latestCreatedAt).toISOString(),
+        sourceLabel,
+        statusNote: buildCombinedStatusNote(selections),
+        workspaceName:
+          availableProjects.length === 1
+            ? availableProjects[0].projectName
+            : 'All projects',
+      })
+    }
+
+    return buildEmptyRangeSnapshot({
       availableProjects,
       generatedAt: new Date(latestCreatedAt).toISOString(),
+      queryRange,
       sourceLabel,
       statusNote: buildCombinedStatusNote(selections),
       workspaceName:
@@ -633,6 +647,36 @@ async function dbEnsureWorkspace(
       lastIngestedAt || null,
     )
     .run()
+}
+
+function buildEmptyRangeSnapshot(input: {
+  availableProjects: DashboardProjectOption[]
+  generatedAt: string
+  queryRange: { endDay: string; startDay: string }
+  sourceLabel: string
+  statusNote: string
+  workspaceName: string
+}): DashboardSnapshot {
+  return buildSnapshotFromRollups({
+    availableProjects: input.availableProjects,
+    bucketWindowEnd: input.queryRange.endDay,
+    bucketWindowStart: input.queryRange.startDay,
+    dailyRows: [],
+    environment: 'production',
+    generatedAt: input.generatedAt,
+    granularity: 'day',
+    hourlyRows: [],
+    issues: [],
+    issuesByDay: [],
+    models: [],
+    modelRowsByDay: [],
+    selectedProjectIds: input.availableProjects.map(
+      (project) => project.projectId,
+    ),
+    sourceLabel: input.sourceLabel,
+    statusNote: input.statusNote,
+    workspaceName: input.workspaceName,
+  })
 }
 
 function buildHeartbeatOnlySnapshot(input: {
@@ -1243,19 +1287,22 @@ function resolveDashboardQueryRange(
       .filter(Boolean)
       .sort()
       .at(-1) || formatUtcDay(new Date())
+  if (timeframe.preset === 'custom') {
+    const requestedEndDay = isValidIsoDay(timeframe.endDay)
+      ? timeframe.endDay
+      : latestDay
+    const requestedStartDay = isValidIsoDay(timeframe.startDay)
+      ? timeframe.startDay
+      : shiftUtcDay(requestedEndDay, -29)
+    return requestedStartDay <= requestedEndDay
+      ? { endDay: requestedEndDay, startDay: requestedStartDay }
+      : { endDay: requestedStartDay, startDay: requestedEndDay }
+  }
+
   const requestedEndDay = isValidIsoDay(timeframe.endDay)
     ? timeframe.endDay
     : latestDay
   const endDay = requestedEndDay < latestDay ? requestedEndDay : latestDay
-
-  if (timeframe.preset === 'custom') {
-    const requestedStartDay = isValidIsoDay(timeframe.startDay)
-      ? timeframe.startDay
-      : shiftUtcDay(endDay, -29)
-    return requestedStartDay <= endDay
-      ? { endDay, startDay: requestedStartDay }
-      : { endDay: requestedStartDay, startDay: endDay }
-  }
 
   const daysBack =
     timeframe.preset === '24h'

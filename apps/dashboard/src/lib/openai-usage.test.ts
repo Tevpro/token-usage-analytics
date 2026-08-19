@@ -59,6 +59,7 @@ class FakePreparedStatement {
   }
 
   async all<T>() {
+    this.db.selects.push({ params: this.params, sql: this.sql })
     return { results: this.db.selectAll(this.sql, this.params) as T[] }
   }
 
@@ -71,6 +72,7 @@ class FakePreparedStatement {
 
 class FakeD1Database {
   runs: BoundStatement[] = []
+  selects: BoundStatement[] = []
   batches: BoundStatement[][] = []
   workspaces = new Map<string, WorkspaceRow>()
   dailyRollups: DailyRollupStoredRow[] = []
@@ -497,6 +499,59 @@ describe('ingestExternalRollupsToD1', () => {
     expect(customResult.snapshot.filters.dailyRows).toHaveLength(100)
     expect(customResult.snapshot.filters.availableStartDay).toBe(customStartDay)
     expect(customResult.snapshot.filters.availableEndDay).toBe(customEndDay)
+  })
+
+  it('preserves an empty future custom range without querying outside it', async () => {
+    const db = new FakeD1Database()
+    const workspaceId = 'workspace:hermes-usage'
+    const latestDay = '2026-08-19'
+    db.workspaces.set(workspaceId, {
+      createdAt: Date.parse(`${latestDay}T12:00:00Z`),
+      id: workspaceId,
+      lastIngestedAt: Date.parse(`${latestDay}T12:00:00Z`),
+      name: 'Hermes Usage',
+      provider: 'Hermes',
+      slug: 'hermes-usage',
+    })
+    db.dailyRollups = [
+      {
+        cachedTokens: 10,
+        cost: 1,
+        createdAt: Date.parse(`${latestDay}T12:00:00Z`),
+        day: latestDay,
+        environment: 'production',
+        id: `${workspaceId}:${latestDay}`,
+        inputTokens: 100,
+        outputTokens: 20,
+        p95LatencyMs: 0,
+        projectId: workspaceId,
+        requests: 1,
+        totalTokens: 120,
+      },
+    ]
+
+    const result = await loadDashboardSnapshotForRequest(
+      { APP_ENV: 'production', DB: db as unknown as D1Database },
+      {
+        endDay: '2027-01-31',
+        preset: 'custom',
+        startDay: '2027-01-01',
+      },
+    )
+    const rangeSelect = [...db.selects]
+      .reverse()
+      .find((statement) =>
+        statement.sql.includes('daily_usage_rollups.environment as environment'),
+      )
+
+    expect(rangeSelect?.params.slice(-2)).toEqual([
+      '2027-01-01',
+      '2027-02-01',
+    ])
+    expect(result.snapshot.filters.availableStartDay).toBe('2027-01-01')
+    expect(result.snapshot.filters.availableEndDay).toBe('2027-01-31')
+    expect(result.snapshot.filters.dailyRows).toEqual([])
+    expect(result.snapshot.table).toEqual([])
   })
 
   it('accepts heartbeat-only payloads without rollups', async () => {
