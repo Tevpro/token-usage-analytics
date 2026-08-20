@@ -438,6 +438,19 @@
   margin-bottom: 18px;
 }
 
+.cost-summary-grid {
+  margin-bottom: 18px;
+}
+
+.cost-tab-content {
+  display: grid;
+  gap: 18px;
+}
+
+.cost-tab-content > .analytics-grid {
+  margin-bottom: 0;
+}
+
 .analytics-grid-top,
 .analytics-grid-bottom {
   grid-template-columns: 1fr;

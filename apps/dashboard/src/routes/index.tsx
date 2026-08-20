@@ -425,7 +425,7 @@ function Home() {
         ))}
       </section>
 
-      <section className="grid gap-4 xl:grid-cols-2">
+      <section className="cost-summary-grid grid gap-4 xl:grid-cols-2">
         <Card className="border-slate-200 bg-slate-50/70">
           <CardContent className="flex flex-col gap-3 py-5 md:flex-row md:items-center md:justify-between">
             <div>
@@ -769,7 +769,7 @@ function Home() {
       ) : null}
 
       {activeTab === 'cost' ? (
-        <>
+        <div className="cost-tab-content">
           <section className="analytics-grid analytics-grid-top">
             <ChartCard
               action={
@@ -902,7 +902,7 @@ function Home() {
               </Table>
             </CardContent>
           </Card>
-        </>
+        </div>
       ) : null}
     </main>
   )
