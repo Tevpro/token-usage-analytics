@@ -376,9 +376,18 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
     for row in models:
         models_by_day.setdefault(str(row["usage_date"]), []).append(
             {
+                "actualCostObservedSessions": int(
+                    row["actual_cost_observed_sessions"] or 0
+                ),
+                "actualCostObservedTokens": int(
+                    row["actual_cost_observed_tokens"] or 0
+                ),
+                "actualCostUsd": round(float(row["actual_cost_usd"]), 4)
+                if row["actual_cost_observed_sessions"]
+                else None,
                 "cacheReadTokens": int(row["cache_read_tokens"] or 0),
                 "cacheWriteTokens": int(row["cache_write_tokens"] or 0),
-                "estimatedCostUsd": round(float(row["cost_usd"] or 0), 4),
+                "estimatedCostUsd": round(float(row["estimated_cost_usd"] or 0), 4),
                 "inputTokens": int(row["input_tokens"] or 0),
                 "model": row["model"] or "unknown-model",
                 "outputTokens": int(row["output_tokens"] or 0),
@@ -401,7 +410,16 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
                 "outputTokens": int(row["output_tokens"] or 0),
                 "cachedTokens": int(row["cached_tokens"] or 0),
                 "reasoningTokens": int(row["reasoning_tokens"] or 0),
-                "estimatedCostUsd": round(float(row["cost_usd"] or 0), 4),
+                "estimatedCostUsd": round(float(row["estimated_cost_usd"] or 0), 4),
+                "actualCostUsd": round(float(row["actual_cost_usd"]), 4)
+                if row["actual_cost_observed_sessions"]
+                else None,
+                "actualCostObservedSessions": int(
+                    row["actual_cost_observed_sessions"] or 0
+                ),
+                "actualCostObservedTokens": int(
+                    row["actual_cost_observed_tokens"] or 0
+                ),
                 "models": models_by_day.get(usage_date, []),
             }
         )
@@ -474,7 +492,8 @@ def _fetch_session_metrics(connection: sqlite3.Connection, *, since: float | Non
             COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
             COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
             COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-            COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
+            COALESCE(estimated_cost_usd, 0) AS estimated_cost_usd,
+            actual_cost_usd AS actual_cost_usd
         FROM sessions
         WHERE started_at IS NOT NULL
     """
@@ -512,7 +531,10 @@ def _aggregate_usage_rows(
                 "cached_tokens": 0,
                 "reasoning_tokens": 0,
                 "total_tokens": 0,
-                "cost_usd": 0.0,
+                "estimated_cost_usd": 0.0,
+                "actual_cost_usd": 0.0,
+                "actual_cost_observed_sessions": 0,
+                "actual_cost_observed_tokens": 0,
             },
         )
         bucket["api_calls"] += int(row["api_calls"] or 0)
@@ -524,8 +546,19 @@ def _aggregate_usage_rows(
         bucket["cache_write_tokens"] += cache_write_tokens
         bucket["cached_tokens"] += cache_read_tokens + cache_write_tokens
         bucket["reasoning_tokens"] += int(row["reasoning_tokens"] or 0)
-        bucket["total_tokens"] += int(row["input_tokens"] or 0) + int(row["output_tokens"] or 0) + cache_read_tokens + cache_write_tokens + int(row["reasoning_tokens"] or 0)
-        bucket["cost_usd"] += float(row["cost_usd"] or 0)
+        row_tokens = (
+            int(row["input_tokens"] or 0)
+            + int(row["output_tokens"] or 0)
+            + cache_read_tokens
+            + cache_write_tokens
+            + int(row["reasoning_tokens"] or 0)
+        )
+        bucket["total_tokens"] += row_tokens
+        bucket["estimated_cost_usd"] += float(row["estimated_cost_usd"] or 0)
+        if row["actual_cost_usd"] is not None:
+            bucket["actual_cost_usd"] += float(row["actual_cost_usd"])
+            bucket["actual_cost_observed_sessions"] += 1
+            bucket["actual_cost_observed_tokens"] += row_tokens
 
     sort_key = (lambda item: (item["usage_date"], -item["total_tokens"], item["model"])) if include_model else (lambda item: item["usage_date"])
     results = sorted(aggregated.values(), key=sort_key)
@@ -556,7 +589,8 @@ def fetch_hourly_rollups(
                 COALESCE(output_tokens, 0) AS output_tokens,
                 COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
                 COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
+                COALESCE(estimated_cost_usd, 0) AS estimated_cost_usd,
+                actual_cost_usd AS actual_cost_usd
             FROM sessions
             WHERE started_at IS NOT NULL
               AND COALESCE(ended_at, started_at) >= ?
@@ -570,7 +604,10 @@ def fetch_hourly_rollups(
             SUM(cached_tokens) AS cached_tokens,
             SUM(reasoning_tokens) AS reasoning_tokens,
             SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
-            SUM(cost_usd) AS cost_usd
+            SUM(estimated_cost_usd) AS estimated_cost_usd,
+            SUM(CASE WHEN actual_cost_usd IS NOT NULL THEN actual_cost_usd ELSE 0 END) AS actual_cost_usd,
+            SUM(CASE WHEN actual_cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS actual_cost_observed_sessions,
+            SUM(CASE WHEN actual_cost_usd IS NOT NULL THEN input_tokens + output_tokens + cached_tokens + reasoning_tokens ELSE 0 END) AS actual_cost_observed_tokens
         FROM scoped_sessions
         GROUP BY usage_date
         ORDER BY usage_date ASC
@@ -604,7 +641,8 @@ def fetch_hourly_model_rollups(
                 COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
                 COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
                 COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
-                COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
+                COALESCE(estimated_cost_usd, 0) AS estimated_cost_usd,
+                actual_cost_usd AS actual_cost_usd
             FROM sessions
             WHERE started_at IS NOT NULL
               AND COALESCE(ended_at, started_at) >= ?
@@ -620,7 +658,10 @@ def fetch_hourly_model_rollups(
             SUM(cache_write_tokens) AS cache_write_tokens,
             SUM(reasoning_tokens) AS reasoning_tokens,
             SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + reasoning_tokens) AS total_tokens,
-            SUM(cost_usd) AS cost_usd
+            SUM(estimated_cost_usd) AS estimated_cost_usd,
+            SUM(CASE WHEN actual_cost_usd IS NOT NULL THEN actual_cost_usd ELSE 0 END) AS actual_cost_usd,
+            SUM(CASE WHEN actual_cost_usd IS NOT NULL THEN 1 ELSE 0 END) AS actual_cost_observed_sessions,
+            SUM(CASE WHEN actual_cost_usd IS NOT NULL THEN input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + reasoning_tokens ELSE 0 END) AS actual_cost_observed_tokens
         FROM scoped_sessions
         GROUP BY usage_date, model
         ORDER BY usage_date ASC, total_tokens DESC, model ASC
@@ -648,7 +689,10 @@ def _normalize_rollup_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
         "cached_tokens": int(row["cached_tokens"] or 0),
         "reasoning_tokens": int(row["reasoning_tokens"] or 0),
         "total_tokens": int(row["total_tokens"] or 0),
-        "cost_usd": float(row["cost_usd"] or 0),
+        "estimated_cost_usd": float(row["estimated_cost_usd"] or 0),
+        "actual_cost_usd": float(row["actual_cost_usd"] or 0),
+        "actual_cost_observed_sessions": int(row["actual_cost_observed_sessions"] or 0),
+        "actual_cost_observed_tokens": int(row["actual_cost_observed_tokens"] or 0),
     }
 
 

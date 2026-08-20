@@ -24,6 +24,9 @@ export type DashboardProjectSummary = DashboardProjectOption & {
 }
 
 export type DashboardDailyRow = DashboardProjectOption & {
+  actualCostObservedSessions?: number
+  actualCostObservedTokens?: number
+  actualCostUsd?: number | null
   cachedTokens: number
   cost: number
   day: string
@@ -110,6 +113,10 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         )
   const totals = aggregatedDailyRows.reduce(
     (accumulator, row) => {
+      accumulator.actualCostObservedSessions +=
+        row.actualCostObservedSessions || 0
+      accumulator.actualCostObservedTokens += row.actualCostObservedTokens || 0
+      accumulator.actualCostUsd += row.actualCostUsd || 0
       accumulator.cachedTokens += row.cachedTokens
       accumulator.cost += row.cost
       accumulator.inputTokens += row.inputTokens
@@ -119,6 +126,9 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       return accumulator
     },
     {
+      actualCostObservedSessions: 0,
+      actualCostObservedTokens: 0,
+      actualCostUsd: 0,
       cachedTokens: 0,
       cost: 0,
       inputTokens: 0,
@@ -140,8 +150,14 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     rates: [],
     sourceUrl: '',
   }
+  const pricingModels = input.modelRowsByDay
+    ? input.modelRowsByDay.map((model) => ({
+        ...model,
+        day: model.day.slice(0, 10),
+      }))
+    : input.models
   const pricing = summarizePublicPricing(
-    input.models.map((model) => ({
+    pricingModels.map((model) => ({
       ...model,
       provider: model.provider || 'Unknown',
     })),
@@ -161,6 +177,17 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   const workspaceLabel = input.workspaceName || summarizeProjectSelection(availableProjects, resolvedSelectedProjectIds)
 
   return {
+    actualCost: {
+      coverageRatio:
+        totals.totalTokens > 0
+          ? totals.actualCostObservedTokens / totals.totalTokens
+          : 0,
+      observedSessions: totals.actualCostObservedSessions,
+      observedTokens: totals.actualCostObservedTokens,
+      reportedCostUsd:
+        totals.actualCostObservedSessions > 0 ? totals.actualCostUsd : null,
+      totalTokens: totals.totalTokens,
+    },
     callouts: [
       topModel
         ? `${topModel.model} drove the most volume with ${formatCompactNumber(topModel.tokens)} tokens across the selected window.`
@@ -256,7 +283,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         value: formatCompactNumber(totals.totalTokens),
       },
       {
-        label: 'Tracked Cost',
+        label: 'Source Cost Estimate',
         tone: totals.cost > 0 ? 'warning' : 'neutral',
         value: `$${totals.cost.toFixed(2)}`,
       },
@@ -302,6 +329,13 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
   ] satisfies DashboardProjectOption[]
 
   return {
+    actualCost: {
+      coverageRatio: 0,
+      observedSessions: 0,
+      observedTokens: 0,
+      reportedCostUsd: null,
+      totalTokens: 0,
+    },
     callouts: [
       'This fallback keeps the UI legible while the live ingestion path is being wired.',
       'Once the Worker starts receiving rollups, the dashboard will read D1 instead of sample data.',
@@ -426,7 +460,7 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       availability: 'unavailable',
       coveredTokens: 0,
       coverageRatio: 0,
-      label: 'Estimated public API equivalent — current standard rates',
+      label: 'Estimated public API equivalent — effective daily rates',
       projectedCostMicroUsd: null,
       sourceUrl: '',
       totalTokens: 0,
@@ -479,6 +513,14 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
   for (const row of rows) {
     const current = dayMap.get(row.day)
     if (current) {
+      current.actualCostObservedSessions =
+        (current.actualCostObservedSessions || 0) +
+        (row.actualCostObservedSessions || 0)
+      current.actualCostObservedTokens =
+        (current.actualCostObservedTokens || 0) +
+        (row.actualCostObservedTokens || 0)
+      current.actualCostUsd =
+        (current.actualCostUsd || 0) + (row.actualCostUsd || 0)
       current.cachedTokens += row.cachedTokens
       current.cost += row.cost
       current.inputTokens += row.inputTokens
@@ -491,6 +533,9 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
 
     dayMap.set(row.day, {
       ...EMPTY_PROJECT,
+      actualCostObservedSessions: row.actualCostObservedSessions || 0,
+      actualCostObservedTokens: row.actualCostObservedTokens || 0,
+      actualCostUsd: row.actualCostUsd,
       cachedTokens: row.cachedTokens,
       cost: row.cost,
       day: row.day,
@@ -741,6 +786,13 @@ function normalizeTraceId(value: string) {
 }
 
 export type DashboardSnapshot = {
+  actualCost: {
+    coverageRatio: number
+    observedSessions: number
+    observedTokens: number
+    reportedCostUsd: number | null
+    totalTokens: number
+  }
   callouts: string[]
   charts: {
     costByDay: Array<{

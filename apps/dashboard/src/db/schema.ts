@@ -1,4 +1,11 @@
-import { index, integer, real, sqliteTable, text } from 'drizzle-orm/sqlite-core'
+import {
+  index,
+  integer,
+  primaryKey,
+  real,
+  sqliteTable,
+  text,
+} from 'drizzle-orm/sqlite-core'
 
 export const workspaces = sqliteTable('workspaces', {
   id: text('id').primaryKey(),
@@ -23,6 +30,13 @@ export const dailyUsageRollups = sqliteTable(
     outputTokens: integer('output_tokens').notNull(),
     cachedTokens: integer('cached_tokens').notNull().default(0),
     estimatedCostUsd: real('estimated_cost_usd').notNull(),
+    actualCostUsd: real('actual_cost_usd'),
+    actualCostObservedSessions: integer('actual_cost_observed_sessions')
+      .notNull()
+      .default(0),
+    actualCostObservedTokens: integer('actual_cost_observed_tokens')
+      .notNull()
+      .default(0),
     errorCount: integer('error_count').notNull().default(0),
     avgLatencyMs: integer('avg_latency_ms').notNull(),
     p95LatencyMs: integer('p95_latency_ms').notNull(),
@@ -55,10 +69,11 @@ export const modelDailyUsage = sqliteTable(
   (table) => [index('model_daily_usage_rollup_idx').on(table.rollupId)],
 )
 
-export const publicModelPricingCache = sqliteTable(
-  'public_model_pricing_cache',
+export const publicModelPricingDaily = sqliteTable(
+  'public_model_pricing_daily',
   {
-    priceKey: text('price_key').primaryKey(),
+    effectiveDay: text('effective_day').notNull(),
+    priceKey: text('price_key').notNull(),
     requestedProvider: text('requested_provider').notNull(),
     requestedModel: text('requested_model').notNull(),
     sourceProvider: text('source_provider'),
@@ -71,7 +86,10 @@ export const publicModelPricingCache = sqliteTable(
     fetchedAt: integer('fetched_at').notNull(),
     sourceUrl: text('source_url').notNull(),
   },
-  (table) => [index('public_model_pricing_cache_fetched_at_idx').on(table.fetchedAt)],
+  (table) => [
+    primaryKey({ columns: [table.effectiveDay, table.priceKey] }),
+    index('public_model_pricing_daily_fetched_at_idx').on(table.fetchedAt),
+  ],
 )
 
 export const toolDailyUsage = sqliteTable(

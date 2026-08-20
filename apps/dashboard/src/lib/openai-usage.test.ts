@@ -20,6 +20,9 @@ type WorkspaceRow = {
 }
 
 type DailyRollupStoredRow = {
+  actualCostObservedSessions?: number
+  actualCostObservedTokens?: number
+  actualCostUsd?: number | null
   cachedTokens: number
   cost: number
   createdAt: number
@@ -85,7 +88,10 @@ class FakeD1Database {
   dailyRollups: DailyRollupStoredRow[] = []
   modelDailyUsage: ModelUsageStoredRow[] = []
 
-  constructor(readonly modelDimensionsAvailable = true) {}
+  constructor(
+    readonly modelDimensionsAvailable = true,
+    readonly actualCostAvailable = modelDimensionsAvailable,
+  ) {}
 
   prepare(sql: string) {
     return new FakePreparedStatement(this, sql)
@@ -127,9 +133,39 @@ class FakeD1Database {
     }
 
     if (sql.includes('INSERT INTO daily_usage_rollups')) {
-      const [id, workspaceId, day, environment, requests, totalTokens, inputTokens, outputTokens, cachedTokens, cost, , , p95LatencyMs, createdAt] =
-        params as [string, string, string, string, number, number, number, number, number, number, number, number, number, number]
+      const [
+        id,
+        workspaceId,
+        day,
+        environment,
+        requests,
+        totalTokens,
+        inputTokens,
+        outputTokens,
+        cachedTokens,
+        cost,
+      ] = params as [
+        string,
+        string,
+        string,
+        string,
+        number,
+        number,
+        number,
+        number,
+        number,
+        number,
+      ]
+      const modern = params.length === 17
+      const actualCostUsd = modern ? (params[10] as number | null) : null
+      const actualCostObservedSessions = modern ? (params[11] as number) : 0
+      const actualCostObservedTokens = modern ? (params[12] as number) : 0
+      const p95LatencyMs = params[modern ? 15 : 12] as number
+      const createdAt = params[modern ? 16 : 13] as number
       this.dailyRollups.push({
+        actualCostObservedSessions,
+        actualCostObservedTokens,
+        actualCostUsd,
         cachedTokens,
         cost,
         createdAt,
@@ -161,6 +197,16 @@ class FakeD1Database {
   }
 
   selectAll(sql: string, params: unknown[]) {
+    if (sql.includes('PRAGMA table_info(daily_usage_rollups)')) {
+      return this.actualCostAvailable
+        ? [
+            { name: 'actual_cost_usd' },
+            { name: 'actual_cost_observed_sessions' },
+            { name: 'actual_cost_observed_tokens' },
+          ]
+        : [{ name: 'id' }, { name: 'estimated_cost_usd' }]
+    }
+
     if (sql.includes('PRAGMA table_info(model_daily_usage)')) {
       return this.modelDimensionsAvailable
         ? [{ name: 'input_tokens' }, { name: 'output_tokens' }, { name: 'cache_read_tokens' }, { name: 'cache_write_tokens' }, { name: 'reasoning_tokens' }]
@@ -215,6 +261,9 @@ class FakeD1Database {
         .map((row) => {
           const workspace = this.workspaces.get(row.projectId)!
           return {
+            actualCostObservedSessions: row.actualCostObservedSessions,
+            actualCostObservedTokens: row.actualCostObservedTokens,
+            actualCostUsd: row.actualCostUsd,
             cachedTokens: row.cachedTokens,
             cost: row.cost,
             createdAt: row.createdAt,
@@ -295,8 +344,8 @@ class FakeD1Database {
         .sort((left, right) => left.day.localeCompare(right.day) || right.tokens - left.tokens)
     }
 
-    if (sql.includes('FROM public_model_pricing_cache')) {
-      throw new Error('D1_ERROR: no such table: public_model_pricing_cache')
+    if (sql.includes('FROM public_model_pricing_daily')) {
+      throw new Error('D1_ERROR: no such table: public_model_pricing_daily')
     }
 
     if (sql.includes('FROM issue_events')) {
@@ -320,6 +369,9 @@ describe('ingestExternalRollupsToD1', () => {
       generatedAt: '2026-05-23T12:00:00Z',
       rollups: [
         {
+          actualCostObservedSessions: 5,
+          actualCostObservedTokens: 1625,
+          actualCostUsd: 3.5,
           cachedTokens: 150,
           estimatedCostUsd: 4.25,
           inputTokens: 1000,
@@ -391,6 +443,9 @@ describe('ingestExternalRollupsToD1', () => {
       450,
       150,
       4.25,
+      3.5,
+      5,
+      1625,
       0,
       0,
       0,
@@ -467,6 +522,145 @@ describe('ingestExternalRollupsToD1', () => {
     ).toHaveLength(7)
   })
 
+  it('keeps malformed actual cost unavailable while preserving explicit zero', async () => {
+    const db = new FakeD1Database()
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+
+    await ingestExternalRollupsToD1(env, {
+      generatedAt: '2026-05-23T12:00:00Z',
+      rollups: [
+        {
+          actualCostObservedSessions: 1,
+          actualCostObservedTokens: 120,
+          actualCostUsd: null,
+          inputTokens: 100,
+          outputTokens: 20,
+          requests: 1,
+          totalTokens: 120,
+          usageDate: '2026-05-21',
+        },
+        {
+          actualCostObservedSessions: 1,
+          actualCostObservedTokens: 120,
+          actualCostUsd: 0,
+          inputTokens: 100,
+          outputTokens: 20,
+          requests: 1,
+          totalTokens: 120,
+          usageDate: '2026-05-22',
+        },
+      ],
+      workspace: {
+        name: 'Hermes Usage',
+        provider: 'Hermes',
+        slug: 'hermes-usage',
+      },
+    })
+
+    expect(db.dailyRollups).toEqual([
+      expect.objectContaining({
+        actualCostObservedSessions: 0,
+        actualCostObservedTokens: 0,
+        actualCostUsd: null,
+      }),
+      expect.objectContaining({
+        actualCostObservedSessions: 1,
+        actualCostObservedTokens: 120,
+        actualCostUsd: 0,
+      }),
+    ])
+  })
+
+  it('does not allocate daily OpenAI actual cost into a partial 24-hour window', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-05-23T12:00:00Z'))
+    const db = new FakeD1Database()
+    const workspaceId = 'workspace:openai-organization'
+    db.workspaces.set(workspaceId, {
+      createdAt: Date.parse('2026-05-23T12:00:00Z'),
+      id: workspaceId,
+      lastIngestedAt: Date.parse('2026-05-23T12:00:00Z'),
+      name: 'OpenAI Organization',
+      provider: 'OpenAI',
+      slug: 'openai-organization',
+    })
+    db.dailyRollups = [
+      {
+        actualCostObservedSessions: 1,
+        actualCostObservedTokens: 2_400,
+        actualCostUsd: 24,
+        cachedTokens: 0,
+        cost: 0,
+        createdAt: Date.parse('2026-05-22T23:59:00Z'),
+        day: '2026-05-22',
+        environment: 'production',
+        id: `${workspaceId}:2026-05-22`,
+        inputTokens: 2_000,
+        outputTokens: 400,
+        p95LatencyMs: 0,
+        projectId: workspaceId,
+        requests: 24,
+        totalTokens: 2_400,
+      },
+      {
+        actualCostObservedSessions: 1,
+        actualCostObservedTokens: 1_300,
+        actualCostUsd: 13,
+        cachedTokens: 0,
+        cost: 0,
+        createdAt: Date.parse('2026-05-23T12:00:00Z'),
+        day: '2026-05-23',
+        environment: 'production',
+        id: `${workspaceId}:2026-05-23`,
+        inputTokens: 1_100,
+        outputTokens: 200,
+        p95LatencyMs: 0,
+        projectId: workspaceId,
+        requests: 13,
+        totalTokens: 1_300,
+      },
+    ]
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          data: Array.from({ length: 24 }, (_, index) => ({
+            results: [
+              {
+                input_cached_tokens: 0,
+                input_tokens: 80,
+                model: 'gpt-5.4',
+                num_model_requests: 1,
+                output_tokens: 20,
+              },
+            ],
+            start_time:
+              Date.parse('2026-05-22T13:00:00Z') / 1_000 + index * 3_600,
+          })),
+        }),
+      ),
+    )
+
+    const loaded = await loadDashboardSnapshotForRequest(
+      {
+        APP_ENV: 'production',
+        DB: db as unknown as D1Database,
+        OPENAI_API_KEY: 'test-key',
+      },
+      { preset: '24h' },
+    )
+    const filtered = filterSnapshotByTimeframe(loaded.snapshot, { preset: '24h' })
+
+    expect(filtered.actualCost).toMatchObject({
+      coverageRatio: 0,
+      observedTokens: 0,
+      reportedCostUsd: null,
+    })
+  })
+
   it('stores OpenAI cached input separately from standard input', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-23T12:00:00Z'))
@@ -501,7 +695,11 @@ describe('ingestExternalRollupsToD1', () => {
         return Response.json({
           data: [
             {
-              results: [{ amount: { value: 1.5 } }],
+              results: [
+                { amount: {} },
+                { amount: { value: null } },
+                { amount: { value: 1.5 } },
+              ],
               start_time: Date.parse('2026-05-22T00:00:00Z') / 1_000,
             },
           ],
@@ -515,15 +713,14 @@ describe('ingestExternalRollupsToD1', () => {
       .flat()
       .find((statement) => statement.sql.includes('INSERT INTO model_daily_usage'))
     expect(modelInsert?.params.slice(4, 12)).toEqual([
-      1,
-      1_200,
-      900,
-      200,
-      100,
-      0,
-      0,
-      1.5,
+      1, 1_200, 900, 200, 100, 0, 0, 0,
     ])
+    expect(db.dailyRollups[0]).toMatchObject({
+      actualCostObservedSessions: 1,
+      actualCostObservedTokens: 1_200,
+      actualCostUsd: 1.5,
+      cost: 0,
+    })
   })
 
   it('preserves Hermes hourly rollups through D1 loading into the 24h dashboard view', async () => {

@@ -1,4 +1,5 @@
 export type ModelPricingReference = {
+  effectiveDay?: string
   model: string
   provider: string
 }
@@ -22,6 +23,7 @@ export type ModelTokenDimensions = {
 }
 
 export type CachedModelPricingRate = ModelPricingRate & {
+  effectiveDay?: string
   fetchedAt: number
   priceKey: string
   requestedModel: string
@@ -39,16 +41,18 @@ export type PublicPricingSummary = {
   availability: PublicPricingLoadResult['availability']
   coveredTokens: number
   coverageRatio: number
-  label: 'Estimated public API equivalent — current standard rates'
+  label: 'Estimated public API equivalent — effective daily rates'
   projectedCostMicroUsd: number | null
   sourceUrl: string
   totalTokens: number
   unpricedModels: string[]
 }
 
-type PricingUsageModel = Partial<ModelTokenDimensions> & ModelPricingReference & {
-  tokens: number
-}
+type PricingUsageModel = Partial<ModelTokenDimensions> &
+  ModelPricingReference & {
+    day?: string
+    tokens: number
+  }
 
 type RemotePricingEntry = {
   cache_creation_input_token_cost?: number
@@ -72,12 +76,10 @@ const PROVIDER_CATALOG_PREFIX: Record<string, string> = {
 
 const DEFAULT_SOURCE_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
-const DEFAULT_REFRESH_MS = 12 * 60 * 60 * 1000
 
 export async function loadPublicModelPricing(
   env: {
     DB: D1Database
-    PUBLIC_MODEL_PRICING_REFRESH_HOURS?: string
     PUBLIC_MODEL_PRICING_SOURCE_URL?: string
   },
   references: ModelPricingReference[],
@@ -88,54 +90,69 @@ export async function loadPublicModelPricing(
 ): Promise<PublicPricingLoadResult> {
   const sourceUrl = env.PUBLIC_MODEL_PRICING_SOURCE_URL || DEFAULT_SOURCE_URL
   const now = options.now || Date.now
-  const uniqueReferences = dedupeReferences(references)
+  const currentDay = formatUtcIsoDay(now())
+  const uniqueReferences = dedupeReferences(
+    references.map((reference) => ({
+      ...reference,
+      effectiveDay: reference.effectiveDay || currentDay,
+    })),
+  )
   if (uniqueReferences.length === 0) {
     return { availability: 'available', rates: [], sourceUrl }
   }
 
   let cachedRates: CachedModelPricingRate[]
   try {
-    cachedRates = await loadCachedRates(env.DB, uniqueReferences)
+    cachedRates = (await loadCachedRates(env.DB, uniqueReferences)).map(
+      (rate) => ({
+        ...rate,
+        effectiveDay: rate.effectiveDay || currentDay,
+      }),
+    )
   } catch {
     return { availability: 'unavailable', rates: [], sourceUrl }
   }
 
-  const cachedByKey = new Map(cachedRates.map((rate) => [rate.priceKey, rate]))
-  const refreshMs = getRefreshMs(env.PUBLIC_MODEL_PRICING_REFRESH_HOURS)
-  const staleReferences = uniqueReferences.filter((reference) => {
-    const cached = cachedByKey.get(getPricingKey(reference))
-    return (
-      !cached ||
-      cached.sourceUrl !== sourceUrl ||
-      now() - cached.fetchedAt > refreshMs
-    )
-  })
-  if (staleReferences.length === 0) {
-    return { availability: 'available', rates: cachedRates, sourceUrl }
+  const cachedByKey = new Map(
+    cachedRates.map((rate) => [
+      getDailyPricingKey(rate.effectiveDay, rate.priceKey),
+      rate,
+    ]),
+  )
+  const missingCurrentReferences = uniqueReferences.filter(
+    (reference) =>
+      reference.effectiveDay === currentDay &&
+      !cachedByKey.has(
+        getDailyPricingKey(reference.effectiveDay, getPricingKey(reference)),
+      ),
+  )
+  if (missingCurrentReferences.length === 0) {
+    return {
+      availability: cachedRates.length > 0 ? 'available' : 'unavailable',
+      rates: cachedRates,
+      sourceUrl: cachedRates[0]?.sourceUrl || sourceUrl,
+    }
   }
 
   try {
-    const catalog = await (options.fetchCatalog || (() => fetchCatalog(sourceUrl)))()
-    const refreshed = staleReferences.map((reference) => ({
+    const catalog = await (
+      options.fetchCatalog || (() => fetchCatalog(sourceUrl))
+    )()
+    const snapshots = missingCurrentReferences.map((reference) => ({
       ...resolveCatalogRate(reference, catalog),
+      effectiveDay: currentDay,
       fetchedAt: now(),
       priceKey: getPricingKey(reference),
       requestedModel: reference.model,
       requestedProvider: reference.provider,
       sourceUrl,
     }))
-    try {
-      await persistRates(env.DB, refreshed)
-    } catch {
-      // The in-memory estimate is still useful; cache persistence is optional.
-    }
-    for (const rate of refreshed) {
-      cachedByKey.set(rate.priceKey, rate)
-    }
+    await persistRates(env.DB, snapshots)
+    const persistedRates = await loadCachedRates(env.DB, uniqueReferences)
     return {
       availability: 'available',
-      rates: [...cachedByKey.values()],
-      sourceUrl,
+      rates: persistedRates,
+      sourceUrl: persistedRates[0]?.sourceUrl || sourceUrl,
     }
   } catch {
     return {
@@ -151,7 +168,10 @@ export function summarizePublicPricing(
   pricing: PublicPricingLoadResult,
 ): PublicPricingSummary {
   const ratesByKey = new Map(
-    pricing.rates.map((rate) => [rate.priceKey, rate]),
+    pricing.rates.map((rate) => [
+      getDailyPricingKey(rate.effectiveDay, rate.priceKey),
+      rate,
+    ]),
   )
   let coveredTokens = 0
   let projectedCostMicroUsd = 0
@@ -159,7 +179,9 @@ export function summarizePublicPricing(
   const unpricedModels = new Set<string>()
 
   for (const model of models) {
-    const rate = ratesByKey.get(getPricingKey(model))
+    const rate = ratesByKey.get(
+      getDailyPricingKey(model.day, getPricingKey(model)),
+    )
     const dimensions = {
       cacheReadTokens: model.cacheReadTokens || 0,
       cacheWriteTokens: model.cacheWriteTokens || 0,
@@ -189,7 +211,7 @@ export function summarizePublicPricing(
     availability: pricing.availability,
     coveredTokens,
     coverageRatio: totalTokens > 0 ? coveredTokens / totalTokens : 0,
-    label: 'Estimated public API equivalent — current standard rates',
+    label: 'Estimated public API equivalent — effective daily rates',
     projectedCostMicroUsd: hasEstimate ? projectedCostMicroUsd : null,
     sourceUrl: pricing.sourceUrl,
     totalTokens,
@@ -269,14 +291,22 @@ export function getPricingKey(reference: ModelPricingReference) {
   return `${normalizeProvider(reference.provider)}:${reference.model.trim().toLowerCase()}`
 }
 
+function getDailyPricingKey(day: string | undefined, priceKey: string) {
+  return `${day || ''}:${priceKey}`
+}
+
 async function loadCachedRates(
   db: D1Database,
   references: ModelPricingReference[],
 ) {
-  const keys = references.map(getPricingKey)
+  const keys = [...new Set(references.map(getPricingKey))]
+  const days = [
+    ...new Set(references.map((reference) => reference.effectiveDay || '')),
+  ]
   const result = await db
     .prepare(
-      `SELECT price_key as priceKey,
+      `SELECT effective_day as effectiveDay,
+              price_key as priceKey,
               requested_provider as requestedProvider,
               requested_model as requestedModel,
               source_provider as sourceProvider,
@@ -288,10 +318,11 @@ async function loadCachedRates(
               resolved as resolved,
               fetched_at as fetchedAt,
               source_url as sourceUrl
-       FROM public_model_pricing_cache
-       WHERE price_key IN (${keys.map(() => '?').join(', ')})`,
+       FROM public_model_pricing_daily
+       WHERE price_key IN (${keys.map(() => '?').join(', ')})
+         AND effective_day IN (${days.map(() => '?').join(', ')})`,
     )
-    .bind(...keys)
+    .bind(...keys, ...days)
     .all<CachedModelPricingRate>()
 
   return result.results.map((rate) => ({
@@ -308,26 +339,16 @@ async function persistRates(db: D1Database, rates: CachedModelPricingRate[]) {
     rates.map((rate) =>
       db
         .prepare(
-          `INSERT INTO public_model_pricing_cache (
-             price_key, requested_provider, requested_model, source_provider,
-             source_model, input_micro_usd_per_mtok, output_micro_usd_per_mtok,
-             cache_read_micro_usd_per_mtok, cache_write_micro_usd_per_mtok,
-             resolved, fetched_at, source_url
-           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(price_key) DO UPDATE SET
-             requested_provider = excluded.requested_provider,
-             requested_model = excluded.requested_model,
-             source_provider = excluded.source_provider,
-             source_model = excluded.source_model,
-             input_micro_usd_per_mtok = excluded.input_micro_usd_per_mtok,
-             output_micro_usd_per_mtok = excluded.output_micro_usd_per_mtok,
-             cache_read_micro_usd_per_mtok = excluded.cache_read_micro_usd_per_mtok,
-             cache_write_micro_usd_per_mtok = excluded.cache_write_micro_usd_per_mtok,
-             resolved = excluded.resolved,
-             fetched_at = excluded.fetched_at,
-             source_url = excluded.source_url`,
+          `INSERT INTO public_model_pricing_daily (
+             effective_day, price_key, requested_provider, requested_model,
+             source_provider, source_model, input_micro_usd_per_mtok,
+             output_micro_usd_per_mtok, cache_read_micro_usd_per_mtok,
+             cache_write_micro_usd_per_mtok, resolved, fetched_at, source_url
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(effective_day, price_key) DO NOTHING`,
         )
         .bind(
+          rate.effectiveDay,
           rate.priceKey,
           rate.requestedProvider,
           rate.requestedModel,
@@ -359,16 +380,16 @@ async function fetchCatalog(sourceUrl: string) {
 function dedupeReferences(references: ModelPricingReference[]) {
   return [
     ...new Map(
-      references.map((reference) => [getPricingKey(reference), reference]),
+      references.map((reference) => [
+        getDailyPricingKey(reference.effectiveDay, getPricingKey(reference)),
+        reference,
+      ]),
     ).values(),
   ]
 }
 
-function getRefreshMs(value: string | undefined) {
-  const hours = Number(value)
-  return Number.isFinite(hours) && hours > 0
-    ? hours * 60 * 60 * 1000
-    : DEFAULT_REFRESH_MS
+function formatUtcIsoDay(timestampMs: number) {
+  return new Date(timestampMs).toISOString().slice(0, 10)
 }
 
 function roundedMicroUsd(tokens: number, microUsdPerMtok: number) {

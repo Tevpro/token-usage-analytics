@@ -32,15 +32,28 @@ their matching D1 window, while `preset=custom&startDay=YYYY-MM-DD&endDay=YYYY-M
 queries that exact date range. `OPENAI_USAGE_DAYS_BACK` controls only the optional
 OpenAI synchronization window; it does not limit dashboard reads.
 
-Projected cost is labeled **Estimated public API equivalent — current standard rates**.
-The dashboard caches exact provider/model matches from LiteLLM's public catalog. Unknown
-or ambiguous model identifiers remain unpriced. Pricing cache, catalog, or migration
-failures are non-fatal: tracked usage still renders with pricing marked unavailable.
+Estimated cost is labeled **Estimated public API equivalent — effective daily rates**.
+The dashboard stores an immutable snapshot for each exact effective day, provider, and model.
+Only the current UTC usage day may be initialized from the live LiteLLM catalog; missing
+historical snapshots remain unpriced rather than borrowing a later rate. Input, output,
+cache-read, cache-write, and reasoning dimensions remain separate. Unknown models and rows
+with incomplete dimensions also remain unpriced.
 
-Migration `0003_public_api_pricing.sql` must be applied before pricing caching is enabled.
-It also adds separate input, output, cache-read, cache-write, and reasoning dimensions to
-model rollups. Preview deployments must not apply this migration to the production D1
-database; an unmigrated preview degrades to an unavailable pricing state instead.
+Each snapshot retains the catalog source URL, resolved source model/provider, retrieval time,
+and effective day. `INSERT ... ON CONFLICT DO NOTHING` preserves the first stored snapshot, so
+a future catalog refresh cannot silently rewrite historical estimates. Correcting a historical
+rate requires an explicit audited data change.
+
+**Actual provider-reported cost** is stored and displayed independently. A nullable actual-cost
+value distinguishes unavailable telemetry from an explicitly reported `$0.00`; token coverage
+is recomputed after active date and project filters. Source estimates are not relabeled as actual
+cost, and fixed subscription fees are not allocated to token rows.
+
+Migration `0003_public_api_pricing.sql` must be applied before daily pricing and actual-cost
+storage are enabled. It also adds separate input, output, cache-read, cache-write, and reasoning
+dimensions to model rollups. Preview deployments must not apply this migration to the production
+D1 database; an unmigrated preview degrades to unavailable pricing/actual-cost states while
+tracked usage remains available.
 
 ## 4. Generate types
 
