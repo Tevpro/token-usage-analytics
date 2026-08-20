@@ -155,6 +155,7 @@ describe('public model pricing', () => {
     )
 
     expect(result.availability).toBe('stale')
+    expect(result.sourceUrl).toBe('https://pricing.example/catalog.json')
     expect(result.rates).toEqual([
       expect.objectContaining({ priceKey: 'openai:gpt-5.4', resolved: true }),
     ])

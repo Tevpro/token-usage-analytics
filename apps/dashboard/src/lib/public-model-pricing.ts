@@ -141,7 +141,7 @@ export async function loadPublicModelPricing(
     return {
       availability: cachedRates.length > 0 ? 'stale' : 'unavailable',
       rates: cachedRates,
-      sourceUrl,
+      sourceUrl: cachedRates[0]?.sourceUrl || sourceUrl,
     }
   }
 }
