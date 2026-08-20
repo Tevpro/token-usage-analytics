@@ -3,6 +3,7 @@ import { isValidIsoDay } from '#/lib/dashboard-timeframe'
 import type { TimeframeSelection } from '#/lib/dashboard-timeframe'
 import type { CloudflareAppEnv } from '#/lib/runtime'
 import { loadPublicModelPricing } from '#/lib/public-model-pricing'
+import type { ModelPricingReference } from '#/lib/public-model-pricing'
 import type {
   DashboardIssueByDay,
   DashboardModelDailyUsage,
@@ -242,6 +243,12 @@ export async function loadDashboardSnapshotForRequest(
 export async function ingestExternalRollupsToD1(
   env: CloudflareAppEnv,
   payload: ExternalIngestPayload,
+  options: {
+    capturePricing?: (
+      env: CloudflareAppEnv,
+      references: ModelPricingReference[],
+    ) => Promise<unknown>
+  } = {},
 ): Promise<SyncResult> {
   const workspace = getExternalWorkspaceConfig(payload)
   const environment = payload.environment || env.APP_ENV || 'production'
@@ -315,6 +322,11 @@ export async function ingestExternalRollupsToD1(
     nowMs,
   )
   await env.DB.batch([...statements, ...issueStatements])
+  await captureCurrentDayPricingAfterIngest(
+    env,
+    dayEntries,
+    options.capturePricing || loadPublicModelPricing,
+  )
 
   return {
     rowsWritten: dayEntries.length,
@@ -479,11 +491,42 @@ export async function syncOpenAiUsageToD1(
     nowMs,
   )
   await env.DB.batch([...statements, ...issueStatements])
+  await captureCurrentDayPricingAfterIngest(
+    env,
+    dayEntries,
+    loadPublicModelPricing,
+  )
 
   return {
     rowsWritten: dayEntries.length,
     sourceLabel: 'Live OpenAI usage data',
     syncedAt: new Date(nowMs).toISOString(),
+  }
+}
+
+async function captureCurrentDayPricingAfterIngest(
+  env: CloudflareAppEnv,
+  dayEntries: DayAccumulator[],
+  capturePricing: (
+    env: CloudflareAppEnv,
+    references: ModelPricingReference[],
+  ) => Promise<unknown>,
+) {
+  const currentDay = formatUtcDay(new Date())
+  const references = dayEntries.flatMap((entry) =>
+    entry.day === currentDay
+      ? [...entry.models.values()].map((model) => ({
+          effectiveDay: currentDay,
+          model: model.model,
+          provider: model.provider,
+        }))
+      : [],
+  )
+  if (references.length === 0) return
+  try {
+    await capturePricing(env, references)
+  } catch {
+    // Pricing is optional enrichment and must not reject otherwise valid usage.
   }
 }
 

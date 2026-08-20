@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  captureDailyPricingForKnownModels,
   estimateCurrentRateMicroUsd,
   loadPublicModelPricing,
   resolveCatalogRate,
@@ -29,6 +30,45 @@ const catalog = {
 } as const
 
 describe('public model pricing', () => {
+  it('captures current-day snapshots for known models without a dashboard read', async () => {
+    const captured: unknown[] = []
+    const db = {
+      prepare: (sql: string) => ({
+        all: async () => {
+          expect(sql).toContain('SELECT DISTINCT provider, model')
+          return {
+            results: [
+              { model: 'gpt-5.4', provider: 'OpenAI' },
+              { model: 'claude-sonnet-4', provider: 'Anthropic' },
+            ],
+          }
+        },
+      }),
+    } as unknown as D1Database
+
+    await captureDailyPricingForKnownModels(
+      { DB: db },
+      {
+        capturePricing: async (_env, references) => {
+          captured.push(references)
+          return { availability: 'available', rates: [], sourceUrl: 'test' }
+        },
+        now: () => Date.parse('2026-08-20T00:05:00Z'),
+      },
+    )
+
+    expect(captured).toEqual([
+      [
+        { effectiveDay: '2026-08-20', model: 'gpt-5.4', provider: 'OpenAI' },
+        {
+          effectiveDay: '2026-08-20',
+          model: 'claude-sonnet-4',
+          provider: 'Anthropic',
+        },
+      ],
+    ])
+  })
+
   it('resolves only exact provider/model entries or explicit aliases', () => {
     expect(resolveCatalogRate({ model: 'gpt-5.4', provider: 'OpenAI' }, catalog)).toMatchObject({
       resolved: true,

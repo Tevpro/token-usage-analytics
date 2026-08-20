@@ -77,11 +77,48 @@ const PROVIDER_CATALOG_PREFIX: Record<string, string> = {
 const DEFAULT_SOURCE_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json'
 
+type PublicPricingEnv = {
+  DB: D1Database
+  PUBLIC_MODEL_PRICING_SOURCE_URL?: string
+}
+
+type CapturePricing = (
+  env: PublicPricingEnv,
+  references: ModelPricingReference[],
+) => Promise<PublicPricingLoadResult>
+
+export async function captureDailyPricingForKnownModels(
+  env: PublicPricingEnv,
+  options: {
+    capturePricing?: CapturePricing
+    now?: () => number
+  } = {},
+): Promise<PublicPricingLoadResult> {
+  const sourceUrl = env.PUBLIC_MODEL_PRICING_SOURCE_URL || DEFAULT_SOURCE_URL
+  try {
+    const knownModels = await env.DB.prepare(
+      `SELECT DISTINCT provider, model
+       FROM model_daily_usage
+       WHERE provider <> '' AND model <> ''
+       ORDER BY provider, model`,
+    ).all<{ model: string; provider: string }>()
+    const effectiveDay = formatUtcIsoDay((options.now || Date.now)())
+    const references = knownModels.results.map((row) => ({
+      effectiveDay,
+      model: row.model,
+      provider: row.provider,
+    }))
+    if (options.capturePricing) {
+      return await options.capturePricing(env, references)
+    }
+    return await loadPublicModelPricing(env, references, { now: options.now })
+  } catch {
+    return { availability: 'unavailable', rates: [], sourceUrl }
+  }
+}
+
 export async function loadPublicModelPricing(
-  env: {
-    DB: D1Database
-    PUBLIC_MODEL_PRICING_SOURCE_URL?: string
-  },
+  env: PublicPricingEnv,
   references: ModelPricingReference[],
   options: {
     fetchCatalog?: () => Promise<RemotePricingCatalog>

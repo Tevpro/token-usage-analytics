@@ -34,10 +34,14 @@ OpenAI synchronization window; it does not limit dashboard reads.
 
 Estimated cost is labeled **Estimated public API equivalent — effective daily rates**.
 The dashboard stores an immutable snapshot for each exact effective day, provider, and model.
-Only the current UTC usage day may be initialized from the live LiteLLM catalog; missing
-historical snapshots remain unpriced rather than borrowing a later rate. Input, output,
-cache-read, cache-write, and reasoning dimensions remain separate. Unknown models and rows
-with incomplete dimensions also remain unpriced.
+Only the current UTC usage day may be initialized from the live LiteLLM catalog. Plugin and
+OpenAI ingestion capture missing snapshots for models observed that day. The separate
+`token-usage-analytics-pricing-snapshot` Worker runs at 00:05 UTC and pre-captures rates for
+known models, so pricing history no longer depends on somebody loading the dashboard. The
+dashboard read remains a fail-open safety net. Missing historical snapshots remain unpriced
+rather than borrowing a later rate. Input, output, cache-read, cache-write, and reasoning
+dimensions remain separate. Unknown models and rows with incomplete dimensions also remain
+unpriced.
 
 Each snapshot retains the catalog source URL, resolved source model/provider, retrieval time,
 and effective day. `INSERT ... ON CONFLICT DO NOTHING` preserves the first stored snapshot, so
@@ -85,6 +89,9 @@ nub run dev
 nub run deploy
 ```
 
+This deploys both the dashboard Worker and the scheduled pricing-snapshot Worker. PR previews
+deploy only the dashboard Worker and never create or mutate the production cron trigger.
+
 ## 9. GitHub Actions deployment
 
 The repo includes path-aware GitHub Actions workflows.
@@ -100,6 +107,7 @@ Deploy workflow behavior:
 1. install dependencies in `apps/dashboard/`
 2. build the app
 3. apply remote D1 migrations
-4. deploy the Worker
+4. deploy the dashboard Worker
+5. deploy the scheduled pricing-snapshot Worker
 
 See `docs/github-actions.md` for the exact GitHub setup.

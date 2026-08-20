@@ -522,6 +522,64 @@ describe('ingestExternalRollupsToD1', () => {
     ).toHaveLength(7)
   })
 
+  it('captures current-day pricing after plugin ingestion and fails open', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-20T12:00:00Z'))
+    const db = new FakeD1Database()
+    const captured: unknown[] = []
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+
+    await ingestExternalRollupsToD1(
+      env,
+      {
+        generatedAt: '2026-08-20T12:00:00Z',
+        rollups: [
+          {
+            inputTokens: 100,
+            models: [
+              {
+                inputTokens: 100,
+                model: 'gpt-5.4',
+                outputTokens: 20,
+                provider: 'OpenAI',
+                requests: 1,
+                tokens: 120,
+              },
+            ],
+            outputTokens: 20,
+            requests: 1,
+            totalTokens: 120,
+            usageDate: '2026-08-20',
+          },
+        ],
+        workspace: {
+          name: 'Hermes Usage',
+          provider: 'Hermes',
+          slug: 'hermes-usage',
+        },
+      },
+      {
+        capturePricing: async (_env, references) => {
+          captured.push(references)
+          throw new Error('pricing catalog unavailable')
+        },
+      },
+    )
+
+    expect(captured).toEqual([
+      [
+        {
+          effectiveDay: '2026-08-20',
+          model: 'gpt-5.4',
+          provider: 'OpenAI',
+        },
+      ],
+    ])
+  })
+
   it('keeps malformed actual cost unavailable while preserving explicit zero', async () => {
     const db = new FakeD1Database()
     const env = {
