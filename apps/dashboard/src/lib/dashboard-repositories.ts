@@ -14,28 +14,24 @@ export function filterSnapshotByRepositories(
     snapshot.repositories.available,
     selectedRepositoryIds,
   )
+  if (normalized.length === 0) {
+    return snapshot
+  }
+
   const selectedSet = new Set(normalized)
-  const shouldFilter = normalized.length > 0
-  const repositoryRows = shouldFilter
-    ? snapshot.filters.repositoryRows.filter((row) =>
-        selectedSet.has(row.repositoryId),
-      )
-    : snapshot.filters.repositoryRows
-  const repositoryModelRows = shouldFilter
-    ? snapshot.filters.repositoryModelRows.filter((row) =>
-        selectedSet.has(row.repositoryId),
-      )
-    : snapshot.filters.repositoryModelRows
-  const hourlyRepositoryRows = shouldFilter
-    ? snapshot.filters.hourlyRepositoryRows?.filter((row) =>
-        selectedSet.has(row.repositoryId),
-      )
-    : snapshot.filters.hourlyRepositoryRows
-  const hourlyRepositoryModelRows = shouldFilter
-    ? snapshot.filters.hourlyRepositoryModelRows?.filter((row) =>
-        selectedSet.has(row.repositoryId),
-      )
-    : snapshot.filters.hourlyRepositoryModelRows
+  const repositoryRows = snapshot.filters.repositoryRows.filter((row) =>
+    selectedSet.has(row.repositoryId),
+  )
+  const repositoryModelRows = snapshot.filters.repositoryModelRows.filter(
+    (row) => selectedSet.has(row.repositoryId),
+  )
+  const hourlyRepositoryRows = snapshot.filters.hourlyRepositoryRows?.filter(
+    (row) => selectedSet.has(row.repositoryId),
+  )
+  const hourlyRepositoryModelRows =
+    snapshot.filters.hourlyRepositoryModelRows?.filter((row) =>
+      selectedSet.has(row.repositoryId),
+    )
 
   // Repository rows are a reconciled dimension of aggregate usage. Rebuilding
   // from them replaces (rather than adds to) aggregate rows, avoiding double counts.
@@ -65,6 +61,7 @@ export function filterSnapshotByRepositories(
     issuesByDay: snapshot.filters.issuesByDay,
     models: summarizeModels(modelRows),
     modelRowsByDay: modelRows,
+    publicPricing: snapshot.filters.publicPricing,
     rangeLabel: snapshot.headline.rangeLabel,
     repositoryModelRows,
     repositoryRows,
