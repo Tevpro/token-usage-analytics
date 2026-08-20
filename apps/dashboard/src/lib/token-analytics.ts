@@ -75,7 +75,34 @@ export type DashboardModelDailyUsage = DashboardProjectOption & {
   tokens: number
 }
 
+export type DashboardRepositoryOption = {
+  repositoryId: string
+  repositoryKey: string
+  repositoryName: string
+}
+
+export type DashboardRepositoryDailyRow = DashboardDailyRow &
+  DashboardRepositoryOption & {
+    attributionStatus: 'exact' | 'cwd-derived' | 'unknown'
+  }
+
+export type DashboardRepositoryModelDailyUsage = DashboardModelDailyUsage &
+  Pick<DashboardRepositoryOption, 'repositoryId'> & {
+    attributionStatus: 'exact' | 'cwd-derived' | 'unknown'
+  }
+
+export type DashboardRepositorySummary = DashboardRepositoryOption & {
+  cachedShare: number
+  cachedTokens: number
+  cost: number
+  inputTokens: number
+  outputTokens: number
+  requests: number
+  totalTokens: number
+}
+
 type SnapshotBuildInput = {
+  availableRepositories?: DashboardRepositoryOption[]
   availableProjects?: DashboardProjectOption[]
   bucketWindowEnd?: string
   bucketWindowStart?: string
@@ -85,13 +112,18 @@ type SnapshotBuildInput = {
   granularity?: DashboardBucketGranularity
   hourlyModelRowsByDay?: DashboardModelDailyUsage[]
   hourlyRows?: DashboardDailyRow[]
+  hourlyRepositoryModelRows?: DashboardRepositoryModelDailyUsage[]
+  hourlyRepositoryRows?: DashboardRepositoryDailyRow[]
   issues: DashboardIssue[]
   issuesByDay?: DashboardIssueByDay[]
   models: DashboardModelSummary[]
   modelRowsByDay?: DashboardModelDailyUsage[]
   publicPricing?: PublicPricingLoadResult
   rangeLabel?: string
+  repositoryModelRows?: DashboardRepositoryModelDailyUsage[]
+  repositoryRows?: DashboardRepositoryDailyRow[]
   selectedProjectIds?: string[]
+  selectedRepositoryIds?: string[]
   sourceLabel: string
   statusNote?: string
   workspaceName?: string
@@ -99,13 +131,25 @@ type SnapshotBuildInput = {
 
 export type DashboardBucketGranularity = 'day' | 'hour'
 
-const MODEL_COLORS = ['#2563eb', '#7c3aed', '#0f766e', '#db2777', '#ea580c', '#0891b2']
+const MODEL_COLORS = [
+  '#2563eb',
+  '#7c3aed',
+  '#0f766e',
+  '#db2777',
+  '#ea580c',
+  '#0891b2',
+]
 
-export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSnapshot {
+export function buildSnapshotFromRollups(
+  input: SnapshotBuildInput,
+): DashboardSnapshot {
   const granularity = input.granularity || 'day'
   const aggregatedDailyRows =
     granularity === 'hour'
-      ? fillMissingHourlyBuckets(summarizeRowsByBucket(input.dailyRows), input.generatedAt)
+      ? fillMissingHourlyBuckets(
+          summarizeRowsByBucket(input.dailyRows),
+          input.generatedAt,
+        )
       : fillMissingDailyBuckets(
           summarizeRowsByBucket(input.dailyRows),
           input.bucketWindowStart,
@@ -138,8 +182,14 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     },
   )
 
-  const totalInputTokens = aggregatedDailyRows.reduce((sum, row) => sum + resolveTotalInputTokens(row), 0)
-  const cacheRate = totalInputTokens > 0 ? Math.min(1, totals.cachedTokens / totalInputTokens) : 0
+  const totalInputTokens = aggregatedDailyRows.reduce(
+    (sum, row) => sum + resolveTotalInputTokens(row),
+    0,
+  )
+  const cacheRate =
+    totalInputTokens > 0
+      ? Math.min(1, totals.cachedTokens / totalInputTokens)
+      : 0
   const modelRows = input.models.map((model, index) => ({
     ...model,
     color: MODEL_COLORS[index % MODEL_COLORS.length],
@@ -164,17 +214,63 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     publicPricing,
   )
   const topModel = modelRows.at(0)
-  const topDayByTokens = [...aggregatedDailyRows].sort((left, right) => right.totalTokens - left.totalTokens).at(0)
-  const topDayByCost = [...aggregatedDailyRows].sort((left, right) => right.cost - left.cost).at(0)
+  const topDayByTokens = [...aggregatedDailyRows]
+    .sort((left, right) => right.totalTokens - left.totalTokens)
+    .at(0)
+  const topDayByCost = [...aggregatedDailyRows]
+    .sort((left, right) => right.cost - left.cost)
+    .at(0)
   const bucketLabel = granularity === 'hour' ? 'hour' : 'day'
   const availableStartDay =
     aggregatedDailyRows[0]?.day || input.bucketWindowStart || ''
   const availableEndDay =
     aggregatedDailyRows.at(-1)?.day || input.bucketWindowEnd || ''
-  const availableProjects = resolveAvailableProjects(input.availableProjects, input.dailyRows)
-  const resolvedSelectedProjectIds = resolveSelectedProjectIds(availableProjects, input.selectedProjectIds)
-  const projectBreakdown = summarizeProjects(input.dailyRows, availableProjects, resolvedSelectedProjectIds)
-  const workspaceLabel = input.workspaceName || summarizeProjectSelection(availableProjects, resolvedSelectedProjectIds)
+  const availableProjects = resolveAvailableProjects(
+    input.availableProjects,
+    input.dailyRows,
+  )
+  const resolvedSelectedProjectIds = resolveSelectedProjectIds(
+    availableProjects,
+    input.selectedProjectIds,
+  )
+  const projectBreakdown = summarizeProjects(
+    input.dailyRows,
+    availableProjects,
+    resolvedSelectedProjectIds,
+  )
+  const workspaceLabel =
+    input.workspaceName ||
+    summarizeProjectSelection(availableProjects, resolvedSelectedProjectIds)
+  const repositoryRows = input.repositoryRows || []
+  const availableRepositories =
+    input.availableRepositories ||
+    [
+      ...new Map(
+        repositoryRows.map((row) => [
+          row.repositoryId,
+          {
+            repositoryId: row.repositoryId,
+            repositoryKey: row.repositoryKey,
+            repositoryName: row.repositoryName,
+          },
+        ]),
+      ).values(),
+    ].sort(
+      (left, right) =>
+        (left.repositoryId === 'unattributed' ? 1 : 0) -
+          (right.repositoryId === 'unattributed' ? 1 : 0) ||
+        left.repositoryName.localeCompare(right.repositoryName),
+    )
+  const repositoryBreakdown = summarizeRepositories(repositoryRows)
+  const attributedRequests = repositoryRows.reduce(
+    (sum, row) =>
+      sum + (row.attributionStatus === 'unknown' ? 0 : row.requests),
+    0,
+  )
+  const repositoryRequests = repositoryRows.reduce(
+    (sum, row) => sum + row.requests,
+    0,
+  )
 
   return {
     actualCost: {
@@ -235,7 +331,15 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       dailyRows: input.dailyRows,
       hourlyModelRowsByDay: input.hourlyModelRowsByDay,
       hourlyRows: input.hourlyRows,
-      issuesByDay: input.issuesByDay || input.issues.map((issue) => ({ ...issue, ...EMPTY_PROJECT, day: availableEndDay })),
+      hourlyRepositoryModelRows: input.hourlyRepositoryModelRows,
+      hourlyRepositoryRows: input.hourlyRepositoryRows,
+      issuesByDay:
+        input.issuesByDay ||
+        input.issues.map((issue) => ({
+          ...issue,
+          ...EMPTY_PROJECT,
+          day: availableEndDay,
+        })),
       modelRowsByDay:
         input.modelRowsByDay ||
         input.models.map((model) => ({
@@ -252,14 +356,19 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
           requests: model.requests,
           tokens: model.tokens,
         })),
+      repositoryModelRows: input.repositoryModelRows || [],
+      repositoryRows,
       selectedProjectIds: resolvedSelectedProjectIds,
       publicPricing,
+      selectedRepositoryIds: input.selectedRepositoryIds || [],
     },
     headline: {
       environment: input.environment,
       generatedAt: input.generatedAt,
       granularity,
-      rangeLabel: input.rangeLabel || `Last ${aggregatedDailyRows.length} ${granularity === 'hour' ? 'hours' : 'days'}`,
+      rangeLabel:
+        input.rangeLabel ||
+        `Last ${aggregatedDailyRows.length} ${granularity === 'hour' ? 'hours' : 'days'}`,
       sourceLabel: input.sourceLabel,
       summary:
         input.statusNote ||
@@ -294,7 +403,12 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       },
       {
         label: 'Cached Input Share',
-        tone: cacheRate >= 0.2 ? 'positive' : cacheRate >= 0.05 ? 'warning' : 'negative',
+        tone:
+          cacheRate >= 0.2
+            ? 'positive'
+            : cacheRate >= 0.05
+              ? 'warning'
+              : 'negative',
         value: `${(cacheRate * 100).toFixed(1)}%`,
       },
     ],
@@ -303,6 +417,13 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
       available: availableProjects,
       breakdown: projectBreakdown,
       selected: resolvedSelectedProjectIds,
+    },
+    repositories: {
+      attributionCoverage:
+        repositoryRequests > 0 ? attributedRequests / repositoryRequests : 0,
+      available: availableRepositories,
+      breakdown: repositoryBreakdown,
+      selected: input.selectedRepositoryIds || [],
     },
     table: aggregatedDailyRows.map((row) => ({
       cachedShare: calculateCachedShare(row),
@@ -318,7 +439,9 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
   }
 }
 
-export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapshot {
+export function buildFallbackDashboardSnapshot(
+  reason: string,
+): DashboardSnapshot {
   const availableProjects = [
     {
       projectId: 'project:fallback-sample',
@@ -352,8 +475,22 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
         secondary: 28000 + index * 3500,
       })),
       models: [
-        { color: MODEL_COLORS[0], cost: 0, model: 'gpt-5.4', provider: 'Hermes', requests: 0, tokens: 0 },
-        { color: MODEL_COLORS[1], cost: 0, model: 'claude-sonnet', provider: 'Hermes', requests: 0, tokens: 0 },
+        {
+          color: MODEL_COLORS[0],
+          cost: 0,
+          model: 'gpt-5.4',
+          provider: 'Hermes',
+          requests: 0,
+          tokens: 0,
+        },
+        {
+          color: MODEL_COLORS[1],
+          cost: 0,
+          model: 'claude-sonnet',
+          provider: 'Hermes',
+          requests: 0,
+          tokens: 0,
+        },
       ],
       requestsCostCache: fallbackDays.map((day, index) => ({
         day,
@@ -372,7 +509,9 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       availableProjects,
       availableStartDay: fallbackDays[0] || '',
       dailyRows: fallbackDays.map((day, index) => ({
-        cachedTokens: Math.round((90000 + index * 8000) * (0.08 + index * 0.01)),
+        cachedTokens: Math.round(
+          (90000 + index * 8000) * (0.08 + index * 0.01),
+        ),
         cost: Number((1.8 + index * 0.35).toFixed(2)),
         day,
         inputTokens: 90000 + index * 8000,
@@ -393,7 +532,8 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
           projectProvider: 'Hermes',
           projectSlug: 'fallback-sample',
           severity: 'medium',
-          title: 'Wire a real ingestion source, then let the Worker read D1 instead of sample data.',
+          title:
+            'Wire a real ingestion source, then let the Worker read D1 instead of sample data.',
         },
       ],
       modelRowsByDay: fallbackDays.flatMap((day, index) => [
@@ -432,7 +572,10 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
           tokens: 44000 + index * 5300,
         },
       ]),
+      repositoryModelRows: [],
+      repositoryRows: [],
       selectedProjectIds: ['project:fallback-sample'],
+      selectedRepositoryIds: [],
     },
     headline: {
       environment: 'Configuration required',
@@ -447,7 +590,8 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       {
         count: 1,
         severity: 'medium',
-        title: 'Wire a real ingestion source, then let the Worker read D1 instead of sample data.',
+        title:
+          'Wire a real ingestion source, then let the Worker read D1 instead of sample data.',
       },
     ],
     kpis: [
@@ -485,6 +629,12 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       ],
       selected: ['project:fallback-sample'],
     },
+    repositories: {
+      attributionCoverage: 0,
+      available: [],
+      breakdown: [],
+      selected: [],
+    },
     table: fallbackDays.map((day, index) => ({
       cachedShare: 0.08 + index * 0.01,
       cost: Number((1.8 + index * 0.35).toFixed(2)),
@@ -498,7 +648,15 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
   }
 }
 
-const fallbackDays = ['2026-05-09', '2026-05-10', '2026-05-11', '2026-05-12', '2026-05-13', '2026-05-14', '2026-05-15']
+const fallbackDays = [
+  '2026-05-09',
+  '2026-05-10',
+  '2026-05-11',
+  '2026-05-12',
+  '2026-05-13',
+  '2026-05-14',
+  '2026-05-15',
+]
 
 const EMPTY_PROJECT: DashboardProjectOption = {
   projectId: 'project:unknown',
@@ -547,15 +705,23 @@ function summarizeRowsByBucket(rows: DashboardDailyRow[]) {
     })
   }
 
-  return [...dayMap.values()].sort((left, right) => left.day.localeCompare(right.day))
+  return [...dayMap.values()].sort((left, right) =>
+    left.day.localeCompare(right.day),
+  )
 }
 
-function fillMissingDailyBuckets(rows: DashboardDailyRow[], windowStart?: string, windowEnd?: string) {
+function fillMissingDailyBuckets(
+  rows: DashboardDailyRow[],
+  windowStart?: string,
+  windowEnd?: string,
+) {
   if (rows.length === 0) {
     return rows
   }
 
-  const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
+  const sortedRows = [...rows].sort((left, right) =>
+    left.day.localeCompare(right.day),
+  )
   const startDay = windowStart || sortedRows[0]?.day
   const endDay = windowEnd || sortedRows.at(-1)?.day
 
@@ -595,12 +761,17 @@ function addDays(day: string, days: number) {
   return next.toISOString().slice(0, 10)
 }
 
-function fillMissingHourlyBuckets(rows: DashboardDailyRow[], generatedAt?: string) {
+function fillMissingHourlyBuckets(
+  rows: DashboardDailyRow[],
+  generatedAt?: string,
+) {
   if (rows.length === 0) {
     return rows
   }
 
-  const sortedRows = [...rows].sort((left, right) => left.day.localeCompare(right.day))
+  const sortedRows = [...rows].sort((left, right) =>
+    left.day.localeCompare(right.day),
+  )
   const latestRowTimestamp = Date.parse(sortedRows.at(-1)?.day || '')
   if (Number.isNaN(latestRowTimestamp)) {
     return sortedRows
@@ -608,7 +779,8 @@ function fillMissingHourlyBuckets(rows: DashboardDailyRow[], generatedAt?: strin
 
   const generatedAtTimestamp = Date.parse(generatedAt || '')
   const anchorTimestamp =
-    Number.isFinite(generatedAtTimestamp) && generatedAtTimestamp > latestRowTimestamp
+    Number.isFinite(generatedAtTimestamp) &&
+    generatedAtTimestamp > latestRowTimestamp
       ? truncateToHour(generatedAtTimestamp)
       : latestRowTimestamp
 
@@ -645,9 +817,14 @@ function truncateToHour(timestampMs: number) {
   return date.getTime()
 }
 
-function resolveAvailableProjects(availableProjects: DashboardProjectOption[] | undefined, dailyRows: DashboardDailyRow[]) {
+function resolveAvailableProjects(
+  availableProjects: DashboardProjectOption[] | undefined,
+  dailyRows: DashboardDailyRow[],
+) {
   if (availableProjects && availableProjects.length > 0) {
-    return [...availableProjects].sort((left, right) => left.projectName.localeCompare(right.projectName))
+    return [...availableProjects].sort((left, right) =>
+      left.projectName.localeCompare(right.projectName),
+    )
   }
 
   const projectMap = new Map<string, DashboardProjectOption>()
@@ -664,26 +841,46 @@ function resolveAvailableProjects(availableProjects: DashboardProjectOption[] | 
     }
   }
 
-  return [...projectMap.values()].sort((left, right) => left.projectName.localeCompare(right.projectName))
+  return [...projectMap.values()].sort((left, right) =>
+    left.projectName.localeCompare(right.projectName),
+  )
 }
 
-function resolveSelectedProjectIds(availableProjects: DashboardProjectOption[], selectedProjectIds?: string[]) {
-  const availableSet = new Set(availableProjects.map((project) => project.projectId))
-  const filtered = (selectedProjectIds || []).filter((projectId) => availableSet.has(projectId))
-  return filtered.length > 0 ? [...new Set(filtered)] : availableProjects.map((project) => project.projectId)
+function resolveSelectedProjectIds(
+  availableProjects: DashboardProjectOption[],
+  selectedProjectIds?: string[],
+) {
+  const availableSet = new Set(
+    availableProjects.map((project) => project.projectId),
+  )
+  const filtered = (selectedProjectIds || []).filter((projectId) =>
+    availableSet.has(projectId),
+  )
+  return filtered.length > 0
+    ? [...new Set(filtered)]
+    : availableProjects.map((project) => project.projectId)
 }
 
-function summarizeProjectSelection(availableProjects: DashboardProjectOption[], selectedProjectIds: string[]) {
+function summarizeProjectSelection(
+  availableProjects: DashboardProjectOption[],
+  selectedProjectIds: string[],
+) {
   if (availableProjects.length === 0) {
     return 'Projects'
   }
 
   if (selectedProjectIds.length === availableProjects.length) {
-    return availableProjects.length === 1 ? availableProjects[0]?.projectName || 'Project' : 'All projects'
+    return availableProjects.length === 1
+      ? availableProjects[0]?.projectName || 'Project'
+      : 'All projects'
   }
 
   if (selectedProjectIds.length === 1) {
-    return availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected project'
+    return (
+      availableProjects.find(
+        (project) => project.projectId === selectedProjectIds[0],
+      )?.projectName || 'Selected project'
+    )
   }
 
   return `${selectedProjectIds.length} selected projects`
@@ -742,7 +939,49 @@ function summarizeProjects(
       ...project,
       cachedShare: calculateCachedShare(project),
     }))
-    .sort((left, right) => right.totalTokens - left.totalTokens || left.projectName.localeCompare(right.projectName))
+    .sort(
+      (left, right) =>
+        right.totalTokens - left.totalTokens ||
+        left.projectName.localeCompare(right.projectName),
+    )
+}
+
+function summarizeRepositories(
+  rows: DashboardRepositoryDailyRow[],
+): DashboardRepositorySummary[] {
+  const repositoryMap = new Map<string, DashboardRepositorySummary>()
+  for (const row of rows) {
+    const current = repositoryMap.get(row.repositoryId) || {
+      cachedShare: 0,
+      cachedTokens: 0,
+      cost: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      repositoryId: row.repositoryId,
+      repositoryKey: row.repositoryKey,
+      repositoryName: row.repositoryName,
+      requests: 0,
+      totalTokens: 0,
+    }
+    current.cachedTokens += row.cachedTokens
+    current.cost += row.cost
+    current.inputTokens += row.inputTokens
+    current.outputTokens += row.outputTokens
+    current.requests += row.requests
+    current.totalTokens += row.totalTokens
+    repositoryMap.set(row.repositoryId, current)
+  }
+
+  return [...repositoryMap.values()]
+    .map((repository) => ({
+      ...repository,
+      cachedShare: calculateCachedShare(repository),
+    }))
+    .sort(
+      (left, right) =>
+        right.totalTokens - left.totalTokens ||
+        left.repositoryName.localeCompare(right.repositoryName),
+    )
 }
 
 function formatCompactNumber(value: number) {
@@ -752,12 +991,17 @@ function formatCompactNumber(value: number) {
   }).format(value)
 }
 
-export function resolveTotalInputTokens(row: Pick<DashboardDailyRow, 'inputTokens' | 'outputTokens' | 'totalTokens'>) {
+export function resolveTotalInputTokens(
+  row: Pick<DashboardDailyRow, 'inputTokens' | 'outputTokens' | 'totalTokens'>,
+) {
   return Math.max(row.inputTokens, row.totalTokens - row.outputTokens, 0)
 }
 
 export function calculateCachedShare(
-  row: Pick<DashboardDailyRow, 'cachedTokens' | 'inputTokens' | 'outputTokens' | 'totalTokens'>,
+  row: Pick<
+    DashboardDailyRow,
+    'cachedTokens' | 'inputTokens' | 'outputTokens' | 'totalTokens'
+  >,
 ) {
   const totalInputTokens = resolveTotalInputTokens(row)
   if (totalInputTokens <= 0 || row.cachedTokens <= 0) {
@@ -835,10 +1079,15 @@ export type DashboardSnapshot = {
     dailyRows: DashboardDailyRow[]
     hourlyModelRowsByDay?: DashboardModelDailyUsage[]
     hourlyRows?: DashboardDailyRow[]
+    hourlyRepositoryModelRows?: DashboardRepositoryModelDailyUsage[]
+    hourlyRepositoryRows?: DashboardRepositoryDailyRow[]
     issuesByDay: DashboardIssueByDay[]
     modelRowsByDay: DashboardModelDailyUsage[]
+    repositoryModelRows: DashboardRepositoryModelDailyUsage[]
+    repositoryRows: DashboardRepositoryDailyRow[]
     selectedProjectIds: string[]
     publicPricing?: PublicPricingLoadResult
+    selectedRepositoryIds: string[]
   }
   headline: {
     environment: string
@@ -859,6 +1108,12 @@ export type DashboardSnapshot = {
   projects: {
     available: DashboardProjectOption[]
     breakdown: DashboardProjectSummary[]
+    selected: string[]
+  }
+  repositories: {
+    attributionCoverage: number
+    available: DashboardRepositoryOption[]
+    breakdown: DashboardRepositorySummary[]
     selected: string[]
   }
   table: Array<{

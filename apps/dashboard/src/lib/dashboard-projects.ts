@@ -7,26 +7,62 @@ import type {
   DashboardSnapshot,
 } from '#/lib/token-analytics'
 
-export function filterSnapshotByProjects(snapshot: DashboardSnapshot, selectedProjectIds: string[]): DashboardSnapshot {
-  const filteredProjectIds = normalizeSelectedProjectIds(snapshot.projects.available, selectedProjectIds)
+export function filterSnapshotByProjects(
+  snapshot: DashboardSnapshot,
+  selectedProjectIds: string[],
+): DashboardSnapshot {
+  const filteredProjectIds = normalizeSelectedProjectIds(
+    snapshot.projects.available,
+    selectedProjectIds,
+  )
   const selectedSet = new Set(filteredProjectIds)
-  const shouldFilter = filteredProjectIds.length > 0 && filteredProjectIds.length < snapshot.projects.available.length
+  const shouldFilter =
+    filteredProjectIds.length > 0 &&
+    filteredProjectIds.length < snapshot.projects.available.length
 
   const dailyRows = shouldFilter
     ? snapshot.filters.dailyRows.filter((row) => selectedSet.has(row.projectId))
     : snapshot.filters.dailyRows
   const issuesByDay = shouldFilter
-    ? snapshot.filters.issuesByDay.filter((issue) => selectedSet.has(issue.projectId))
+    ? snapshot.filters.issuesByDay.filter((issue) =>
+        selectedSet.has(issue.projectId),
+      )
     : snapshot.filters.issuesByDay
   const modelRowsByDay = shouldFilter
-    ? snapshot.filters.modelRowsByDay.filter((row) => selectedSet.has(row.projectId))
+    ? snapshot.filters.modelRowsByDay.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
     : snapshot.filters.modelRowsByDay
   const hourlyRows = shouldFilter
-    ? snapshot.filters.hourlyRows?.filter((row) => selectedSet.has(row.projectId))
+    ? snapshot.filters.hourlyRows?.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
     : snapshot.filters.hourlyRows
   const hourlyModelRowsByDay = shouldFilter
-    ? snapshot.filters.hourlyModelRowsByDay?.filter((row) => selectedSet.has(row.projectId))
+    ? snapshot.filters.hourlyModelRowsByDay?.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
     : snapshot.filters.hourlyModelRowsByDay
+  const repositoryRows = shouldFilter
+    ? snapshot.filters.repositoryRows.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
+    : snapshot.filters.repositoryRows
+  const repositoryModelRows = shouldFilter
+    ? snapshot.filters.repositoryModelRows.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
+    : snapshot.filters.repositoryModelRows
+  const hourlyRepositoryRows = shouldFilter
+    ? snapshot.filters.hourlyRepositoryRows?.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
+    : snapshot.filters.hourlyRepositoryRows
+  const hourlyRepositoryModelRows = shouldFilter
+    ? snapshot.filters.hourlyRepositoryModelRows?.filter((row) =>
+        selectedSet.has(row.projectId),
+      )
+    : snapshot.filters.hourlyRepositoryModelRows
 
   return buildSnapshotFromRollups({
     availableProjects: snapshot.projects.available,
@@ -38,49 +74,84 @@ export function filterSnapshotByProjects(snapshot: DashboardSnapshot, selectedPr
     granularity: snapshot.headline.granularity,
     hourlyModelRowsByDay,
     hourlyRows,
+    hourlyRepositoryModelRows,
+    hourlyRepositoryRows,
     issues: summarizeIssues(issuesByDay),
     issuesByDay,
     models: summarizeModels(modelRowsByDay),
     modelRowsByDay,
     publicPricing: snapshot.filters.publicPricing,
+    repositoryModelRows,
+    repositoryRows,
     rangeLabel: snapshot.headline.rangeLabel,
     selectedProjectIds: filteredProjectIds,
+    selectedRepositoryIds: snapshot.filters.selectedRepositoryIds,
     sourceLabel: snapshot.headline.sourceLabel,
     statusNote: snapshot.headline.summary,
-    workspaceName: summarizeProjectSelection(snapshot.projects.available, filteredProjectIds),
+    workspaceName: summarizeProjectSelection(
+      snapshot.projects.available,
+      filteredProjectIds,
+    ),
   })
 }
 
-function normalizeSelectedProjectIds(availableProjects: DashboardProjectOption[], selectedProjectIds: string[]) {
-  const availableSet = new Set(availableProjects.map((project) => project.projectId))
-  return [...new Set(selectedProjectIds.filter((projectId) => availableSet.has(projectId)))]
+function normalizeSelectedProjectIds(
+  availableProjects: DashboardProjectOption[],
+  selectedProjectIds: string[],
+) {
+  const availableSet = new Set(
+    availableProjects.map((project) => project.projectId),
+  )
+  return [
+    ...new Set(
+      selectedProjectIds.filter((projectId) => availableSet.has(projectId)),
+    ),
+  ]
 }
 
-function summarizeProjectSelection(availableProjects: DashboardProjectOption[], selectedProjectIds: string[]) {
-  if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjects.length) {
-    return availableProjects.length === 1 ? availableProjects[0]?.projectName || 'Agent' : 'All agents'
+function summarizeProjectSelection(
+  availableProjects: DashboardProjectOption[],
+  selectedProjectIds: string[],
+) {
+  if (
+    selectedProjectIds.length === 0 ||
+    selectedProjectIds.length === availableProjects.length
+  ) {
+    return availableProjects.length === 1
+      ? availableProjects[0]?.projectName || 'Agent'
+      : 'All agents'
   }
 
   if (selectedProjectIds.length === 1) {
-    return availableProjects.find((project) => project.projectId === selectedProjectIds[0])?.projectName || 'Selected agent'
+    return (
+      availableProjects.find(
+        (project) => project.projectId === selectedProjectIds[0],
+      )?.projectName || 'Selected agent'
+    )
   }
 
   return `${selectedProjectIds.length} selected agents`
 }
 
-function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelSummary[] {
+function summarizeModels(
+  modelRows: DashboardModelDailyUsage[],
+): DashboardModelSummary[] {
   const modelMap = new Map<string, DashboardModelSummary>()
 
   for (const row of modelRows) {
     const key = `${row.provider}:${row.model}`
     const current = modelMap.get(key)
     if (current) {
-      current.cacheReadTokens = (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
-      current.cacheWriteTokens = (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
+      current.cacheReadTokens =
+        (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
+      current.cacheWriteTokens =
+        (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
       current.cost += row.cost
       current.inputTokens = (current.inputTokens || 0) + (row.inputTokens || 0)
-      current.outputTokens = (current.outputTokens || 0) + (row.outputTokens || 0)
-      current.reasoningTokens = (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
+      current.outputTokens =
+        (current.outputTokens || 0) + (row.outputTokens || 0)
+      current.reasoningTokens =
+        (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
       current.requests += row.requests
       current.tokens += row.tokens
       continue
@@ -100,7 +171,10 @@ function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelS
     })
   }
 
-  return [...modelMap.values()].sort((left, right) => right.tokens - left.tokens || left.model.localeCompare(right.model))
+  return [...modelMap.values()].sort(
+    (left, right) =>
+      right.tokens - left.tokens || left.model.localeCompare(right.model),
+  )
 }
 
 function summarizeIssues(issueRows: DashboardIssueByDay[]) {
@@ -118,6 +192,9 @@ function summarizeIssues(issueRows: DashboardIssueByDay[]) {
   }
 
   return [...issueMap.values()]
-    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
+    .sort(
+      (left, right) =>
+        right.count - left.count || left.title.localeCompare(right.title),
+    )
     .map(({ count, severity, title }) => ({ count, severity, title }))
 }

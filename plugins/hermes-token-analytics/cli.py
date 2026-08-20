@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib
 import json
 import os
+import re
 import sqlite3
+import subprocess
 import sys
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -248,9 +252,12 @@ def _cmd_install_cron_wrapper(path: Path, *, force: bool) -> int:
             {
                 "ok": True,
                 "path": str(created),
-                "usage": (
-                    "hermes cron create 'every 15m' --name 'token-analytics-sync' "
-                    f"--script {created.name} --no-agent"
+                "next": "hermes cron list --all",
+                "required_checklist": "REQUIRED_INSTALLATION_CHECKLIST.md",
+                "note": (
+                    "Inspect existing jobs before creating or editing anything; "
+                    "reconcile to exactly one enabled token-analytics-sync job, "
+                    "then verify a cron-triggered run."
                 ),
             },
             indent=2,
@@ -363,14 +370,53 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
     hourly_now = _utc_now()
     with _connect_db(config) as connection:
         connection.row_factory = sqlite3.Row
+        rows = _fetch_session_metrics(
+            connection,
+            since=(hourly_now - timedelta(days=config.days_back + 2)).timestamp(),
+        )
+        daily_start = hourly_now.date() - timedelta(days=config.days_back - 1)
+        current_hour = _truncate_to_hour(hourly_now)
+        hour_start = current_hour - timedelta(hours=23)
+        hour_end = current_hour + timedelta(hours=1)
+        daily_rows = [
+            row for row in rows
+            if datetime.fromtimestamp(float(row["session_ts"]), tz=timezone.utc).date() >= daily_start
+        ]
+        hourly_rows = [
+            row for row in rows
+            if hour_start
+            <= datetime.fromtimestamp(float(row["session_ts"]), tz=timezone.utc)
+            < hour_end
+        ]
         rollups = [
-            *fetch_daily_rollups(connection, config.days_back),
-            *fetch_hourly_rollups(connection, now=hourly_now),
+            *_aggregate_usage_rows(
+                daily_rows,
+                key_fn=lambda session: _session_utc_day(session["session_ts"]),
+                include_model=False,
+            ),
+            *_aggregate_usage_rows(
+                hourly_rows,
+                key_fn=lambda session: _session_utc_hour(session["session_ts"]),
+                include_model=False,
+            ),
         ]
         models = [
-            *fetch_model_rollups(connection, config.days_back),
-            *fetch_hourly_model_rollups(connection, now=hourly_now),
+            *_aggregate_usage_rows(
+                daily_rows,
+                key_fn=lambda session: _session_utc_day(session["session_ts"]),
+                include_model=True,
+            ),
+            *_aggregate_usage_rows(
+                hourly_rows,
+                key_fn=lambda session: _session_utc_hour(session["session_ts"]),
+                include_model=True,
+            ),
         ]
+        repository_rollups = _build_repository_rollups(
+            rows,
+            days_back=config.days_back,
+            now=hourly_now,
+        )
 
     models_by_day: dict[str, list[dict[str, Any]]] = {}
     for row in models:
@@ -401,6 +447,9 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
     payload_rollups: list[dict[str, Any]] = []
     for row in sorted(rollups, key=lambda item: str(item["usage_date"])):
         usage_date = str(row["usage_date"])
+        estimated_cost = round(float(row["estimated_cost_usd"] or 0), 4)
+        bucket_models = models_by_day.get(usage_date, [])
+        _reconcile_rounded_costs(bucket_models, estimated_cost)
         payload_rollups.append(
             {
                 "usageDate": usage_date,
@@ -420,11 +469,12 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
                 "actualCostObservedTokens": int(
                     row["actual_cost_observed_tokens"] or 0
                 ),
-                "models": models_by_day.get(usage_date, []),
+                "models": bucket_models,
             }
         )
 
     return {
+        "schemaVersion": 2,
         "environment": config.environment,
         "generatedAt": _iso_now(),
         "sourceLabel": config.source_label,
@@ -434,6 +484,7 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
             "slug": config.workspace_slug,
         },
         "rollups": payload_rollups,
+        "repositoryRollups": repository_rollups,
     }
 
 
@@ -461,28 +512,11 @@ def fetch_model_rollups(connection: sqlite3.Connection, days_back: int) -> list[
     )
 
 
-def fetch_hourly_rollups(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    rows = _fetch_session_metrics(connection, since=cutoff.timestamp())
-    return _aggregate_usage_rows(
-        rows,
-        key_fn=lambda session: _session_utc_hour(session["session_ts"]),
-        include_model=False,
-    )
-
-
-def fetch_hourly_model_rollups(connection: sqlite3.Connection) -> list[dict[str, Any]]:
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
-    rows = _fetch_session_metrics(connection, since=cutoff.timestamp())
-    return _aggregate_usage_rows(
-        rows,
-        key_fn=lambda session: _session_utc_hour(session["session_ts"]),
-        include_model=True,
-    )
-
-
 def _fetch_session_metrics(connection: sqlite3.Connection, *, since: float | None = None) -> list[dict[str, Any]]:
-    query = """
+    columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(sessions)")}
+    cwd_select = "cwd" if "cwd" in columns else "NULL"
+    repo_select = "git_repo_root" if "git_repo_root" in columns else "NULL"
+    query = f"""
         SELECT
             COALESCE(ended_at, started_at) AS session_ts,
             COALESCE(NULLIF(model, ''), 'unknown-model') AS model,
@@ -493,7 +527,10 @@ def _fetch_session_metrics(connection: sqlite3.Connection, *, since: float | Non
             COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
             COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
             COALESCE(estimated_cost_usd, 0) AS estimated_cost_usd,
-            actual_cost_usd AS actual_cost_usd
+            actual_cost_usd AS actual_cost_usd,
+            COALESCE(estimated_cost_usd, 0) AS cost_usd,
+            {cwd_select} AS cwd,
+            {repo_select} AS git_repo_root
         FROM sessions
         WHERE started_at IS NOT NULL
     """
@@ -503,6 +540,192 @@ def _fetch_session_metrics(connection: sqlite3.Connection, *, since: float | Non
         params = (since,)
     query += " ORDER BY session_ts ASC"
     return [dict(row) for row in connection.execute(query, params)]
+
+
+def _build_repository_rollups(
+    rows: list[dict[str, Any]],
+    *,
+    days_back: int,
+    now: datetime,
+) -> list[dict[str, Any]]:
+    daily_start = now.date() - timedelta(days=days_back - 1)
+    hour_start = _truncate_to_hour(now) - timedelta(hours=23)
+    hour_end = _truncate_to_hour(now) + timedelta(hours=1)
+    scoped: list[tuple[str, dict[str, Any], dict[str, str], str]] = []
+    repository_cache: dict[tuple[str | None, str | None], tuple[dict[str, str], str]] = {}
+    for row in rows:
+        timestamp = datetime.fromtimestamp(float(row["session_ts"]), tz=timezone.utc)
+        usage_dates: list[str] = []
+        if timestamp.date() >= daily_start:
+            usage_dates.append(_session_utc_day(row["session_ts"]))
+        if hour_start <= timestamp < hour_end:
+            usage_dates.append(_session_utc_hour(row["session_ts"]))
+        if not usage_dates:
+            continue
+        git_repo_root = row.get("git_repo_root")
+        cwd = row.get("cwd")
+        repository_signal = (
+            str(git_repo_root) if git_repo_root else None,
+            str(cwd) if cwd else None,
+        )
+        if repository_signal not in repository_cache:
+            repository_cache[repository_signal] = _resolve_session_repository(row)
+        repository, status = repository_cache[repository_signal]
+        scoped.extend((usage_date, row, repository, status) for usage_date in usage_dates)
+
+    buckets: dict[tuple[str, str, str], dict[str, Any]] = {}
+    model_buckets: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for usage_date, row, repository, status in scoped:
+        key = (usage_date, repository["key"], status)
+        bucket = buckets.setdefault(key, {
+            "usageDate": usage_date,
+            "repository": repository,
+            "attributionStatus": status,
+            "requests": 0,
+            "totalTokens": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "cachedTokens": 0,
+            "reasoningTokens": 0,
+            "estimatedCostUsd": 0.0,
+            "models": [],
+        })
+        cache_read_tokens = int(
+            row.get("cache_read_tokens") or row.get("cached_tokens") or 0
+        )
+        cache_write_tokens = int(row.get("cache_write_tokens") or 0)
+        cached_tokens = cache_read_tokens + cache_write_tokens
+        total = sum(
+            int(row[name] or 0)
+            for name in ("input_tokens", "output_tokens", "reasoning_tokens")
+        ) + cached_tokens
+        bucket["requests"] += int(row["api_calls"] or 0)
+        bucket["totalTokens"] += total
+        bucket["inputTokens"] += int(row["input_tokens"] or 0)
+        bucket["outputTokens"] += int(row["output_tokens"] or 0)
+        bucket["cachedTokens"] += cached_tokens
+        bucket["reasoningTokens"] += int(row["reasoning_tokens"] or 0)
+        bucket["estimatedCostUsd"] += float(row["cost_usd"] or 0)
+        model_key = (*key, str(row["model"]))
+        model = model_buckets.setdefault(model_key, {
+            "model": str(row["model"]),
+            "requests": 0,
+            "tokens": 0,
+            "estimatedCostUsd": 0.0,
+        })
+        model["requests"] += int(row["api_calls"] or 0)
+        model["tokens"] += total
+        model["estimatedCostUsd"] += float(row["cost_usd"] or 0)
+
+    buckets_by_date: dict[str, list[dict[str, Any]]] = {}
+    for key, bucket in buckets.items():
+        bucket["models"] = sorted(
+            (model for model_key, model in model_buckets.items() if model_key[:3] == key),
+            key=lambda model: (-model["tokens"], model["model"]),
+        )
+        buckets_by_date.setdefault(bucket["usageDate"], []).append(bucket)
+
+    for date_buckets in buckets_by_date.values():
+        rounded_total = round(sum(float(bucket["estimatedCostUsd"]) for bucket in date_buckets), 4)
+        _reconcile_rounded_costs(date_buckets, rounded_total)
+        for bucket in date_buckets:
+            _reconcile_rounded_costs(bucket["models"], bucket["estimatedCostUsd"])
+    return sorted(buckets.values(), key=lambda item: (
+        item["usageDate"], item["repository"]["name"], item["attributionStatus"]
+    ))
+
+
+def _reconcile_rounded_costs(items: list[dict[str, Any]], target_cost: float) -> None:
+    """Round child costs to 4 decimals while preserving their parent total."""
+    if not items:
+        return
+    target_units = int(round(target_cost * 10_000))
+    exact_units = [max(0.0, float(item["estimatedCostUsd"])) * 10_000 for item in items]
+    allocated = [int(value) for value in exact_units]
+    remaining = target_units - sum(allocated)
+    order = sorted(
+        range(len(items)),
+        key=lambda index: (-(exact_units[index] - allocated[index]), index),
+    )
+    if remaining >= 0:
+        for index in order[:remaining]:
+            allocated[index] += 1
+    else:
+        removable = sorted(
+            (index for index in range(len(items)) if allocated[index] > 0),
+            key=lambda index: (exact_units[index] - allocated[index], index),
+        )
+        for index in removable[: -remaining]:
+            allocated[index] -= 1
+    for item, units in zip(items, allocated):
+        item["estimatedCostUsd"] = units / 10_000
+
+
+def _resolve_session_repository(row: dict[str, Any]) -> tuple[dict[str, str], str]:
+    for raw_path, status in ((row.get("git_repo_root"), "exact"), (row.get("cwd"), "cwd-derived")):
+        if not raw_path:
+            continue
+        path = Path(str(raw_path)).expanduser()
+        if path.exists():
+            identity = _git_repository_identity(path)
+            if identity:
+                return identity, status
+    return {"key": "unattributed", "name": "Unattributed"}, "unknown"
+
+
+def _git_repository_identity(path: Path) -> dict[str, str] | None:
+    try:
+        top_level = _git_output(path, "rev-parse", "--show-toplevel")
+        common_dir = _git_output(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return None
+    try:
+        remote = _git_output(path, "remote", "get-url", "origin")
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        remote = ""
+    sanitized = _sanitize_remote_identity(remote) if remote else None
+    if sanitized:
+        return {"key": sanitized, "name": sanitized.rstrip("/").split("/")[-1]}
+    digest = hashlib.sha256(str(Path(common_dir).resolve()).encode("utf-8")).hexdigest()
+    return {"key": f"local:{digest}", "name": Path(top_level).name or "Local repository"}
+
+
+def _git_output(path: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(path), *args], check=True, capture_output=True,
+        text=True, timeout=5,
+    ).stdout.strip()
+
+
+def _sanitize_remote_identity(remote: str) -> str | None:
+    value = remote.strip()
+    if not value:
+        return None
+    if "://" in value:
+        parsed = urlsplit(value)
+        hostname = (parsed.hostname or "").lower()
+        if not hostname:
+            return None
+        host = f"[{hostname}]" if ":" in hostname else hostname
+        try:
+            port = parsed.port
+        except ValueError:
+            return None
+        defaults = {"git": 9418, "http": 80, "https": 443, "ssh": 22}
+        if port is not None and port != defaults.get(parsed.scheme.lower()):
+            host = f"{host}:{port}"
+        path = parsed.path
+    else:
+        match = re.fullmatch(r"(?:[^@/\s]+@)?(\[[^\]]+\]|[^:/\s]+):(.+)", value)
+        if not match:
+            return None
+        host, path = match.groups()
+        host = host.lower()
+        path = re.split(r"[?#]", path, maxsplit=1)[0]
+    normalized_path = path.strip("/")
+    if normalized_path.endswith(".git"):
+        normalized_path = normalized_path[:-4]
+    return f"{host}/{normalized_path}" if host and normalized_path else None
 
 
 def _aggregate_usage_rows(

@@ -31,9 +31,7 @@ const PRESET_DAY_COUNTS: Record<Exclude<TimeframePreset, 'custom'>, number> = {
 export function normalizeDashboardQuerySelection(
   selection: Partial<TimeframeSelection> | undefined,
 ): TimeframeSelection {
-  const preset = isTimeframePreset(selection?.preset)
-    ? selection.preset
-    : '30d'
+  const preset = isTimeframePreset(selection?.preset) ? selection.preset : '30d'
 
   if (preset !== 'custom') {
     return { preset }
@@ -42,9 +40,7 @@ export function normalizeDashboardQuerySelection(
   const startDay = isValidIsoDay(selection?.startDay)
     ? selection.startDay
     : undefined
-  const endDay = isValidIsoDay(selection?.endDay)
-    ? selection.endDay
-    : undefined
+  const endDay = isValidIsoDay(selection?.endDay) ? selection.endDay : undefined
 
   return {
     endDay,
@@ -53,15 +49,30 @@ export function normalizeDashboardQuerySelection(
   }
 }
 
-export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection: TimeframeSelection): DashboardSnapshot {
+export function filterSnapshotByTimeframe(
+  snapshot: DashboardSnapshot,
+  selection: TimeframeSelection,
+): DashboardSnapshot {
   const resolved = resolveTimeframeSelection(snapshot, selection)
 
-  if (selection.preset === '24h' && snapshot.filters.hourlyRows && snapshot.filters.hourlyRows.length > 0) {
-    const hourlyRows = [...snapshot.filters.hourlyRows].sort((left, right) => left.day.localeCompare(right.day))
+  if (
+    selection.preset === '24h' &&
+    snapshot.filters.hourlyRows &&
+    snapshot.filters.hourlyRows.length > 0
+  ) {
+    const hourlyRows = [...snapshot.filters.hourlyRows].sort((left, right) =>
+      left.day.localeCompare(right.day),
+    )
     const hourlyModelRowsByDay = snapshot.filters.hourlyModelRowsByDay?.length
       ? snapshot.filters.hourlyModelRowsByDay
       : snapshot.filters.modelRowsByDay.filter((row) => row.day.includes('T'))
-    const activeModelRows = hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : snapshot.filters.modelRowsByDay
+    const activeModelRows =
+      hourlyModelRowsByDay.length > 0
+        ? hourlyModelRowsByDay
+        : snapshot.filters.modelRowsByDay
+    const hourlyRepositoryRows = snapshot.filters.hourlyRepositoryRows || []
+    const hourlyRepositoryModelRows =
+      snapshot.filters.hourlyRepositoryModelRows || []
 
     return buildSnapshotFromRollups({
       availableProjects: snapshot.filters.availableProjects,
@@ -69,28 +80,43 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
       environment: snapshot.headline.environment,
       generatedAt: snapshot.headline.generatedAt,
       granularity: 'hour',
-      hourlyModelRowsByDay: hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : undefined,
+      hourlyModelRowsByDay:
+        hourlyModelRowsByDay.length > 0 ? hourlyModelRowsByDay : undefined,
       hourlyRows,
+      hourlyRepositoryModelRows,
+      hourlyRepositoryRows,
       issues: [],
       issuesByDay: [],
       models: summarizeModels(activeModelRows),
       modelRowsByDay: activeModelRows,
       publicPricing: snapshot.filters.publicPricing,
+      repositoryModelRows: hourlyRepositoryModelRows,
+      repositoryRows: hourlyRepositoryRows,
       rangeLabel: resolved.rangeLabel,
       selectedProjectIds: snapshot.filters.selectedProjectIds,
+      selectedRepositoryIds: snapshot.filters.selectedRepositoryIds,
       sourceLabel: snapshot.headline.sourceLabel,
       statusNote: snapshot.headline.summary,
       workspaceName: snapshot.headline.workspace,
     })
   }
 
-  const filteredDailyRows = snapshot.filters.dailyRows.filter((row) => row.day >= resolved.startDay && row.day <= resolved.endDay)
+  const filteredDailyRows = snapshot.filters.dailyRows.filter(
+    (row) => row.day >= resolved.startDay && row.day <= resolved.endDay,
+  )
   const filteredIssueRows = snapshot.filters.issuesByDay.filter(
     (issue) => issue.day >= resolved.startDay && issue.day <= resolved.endDay,
   )
   const filteredModelRows = snapshot.filters.modelRowsByDay.filter(
     (row) => row.day >= resolved.startDay && row.day <= resolved.endDay,
   )
+  const filteredRepositoryRows = snapshot.filters.repositoryRows.filter(
+    (row) => row.day >= resolved.startDay && row.day <= resolved.endDay,
+  )
+  const filteredRepositoryModelRows =
+    snapshot.filters.repositoryModelRows.filter(
+      (row) => row.day >= resolved.startDay && row.day <= resolved.endDay,
+    )
 
   return buildSnapshotFromRollups({
     availableProjects: snapshot.filters.availableProjects,
@@ -105,22 +131,31 @@ export function filterSnapshotByTimeframe(snapshot: DashboardSnapshot, selection
     models: summarizeModels(filteredModelRows),
     modelRowsByDay: filteredModelRows,
     publicPricing: snapshot.filters.publicPricing,
+    repositoryModelRows: filteredRepositoryModelRows,
+    repositoryRows: filteredRepositoryRows,
     rangeLabel: resolved.rangeLabel,
     selectedProjectIds: snapshot.filters.selectedProjectIds,
+    selectedRepositoryIds: snapshot.filters.selectedRepositoryIds,
     sourceLabel: snapshot.headline.sourceLabel,
     statusNote: snapshot.headline.summary,
     workspaceName: snapshot.headline.workspace,
   })
 }
 
-export function resolveTimeframeSelection(snapshot: DashboardSnapshot, selection: TimeframeSelection): ResolvedTimeframe {
+export function resolveTimeframeSelection(
+  snapshot: DashboardSnapshot,
+  selection: TimeframeSelection,
+): ResolvedTimeframe {
   const availableStartDay = snapshot.filters.availableStartDay
   const availableEndDay = snapshot.filters.availableEndDay
 
   if (selection.preset === 'custom') {
     const requestedStart = selection.startDay || availableStartDay
     const requestedEnd = selection.endDay || availableEndDay
-    const [orderedStart, orderedEnd] = requestedStart <= requestedEnd ? [requestedStart, requestedEnd] : [requestedEnd, requestedStart]
+    const [orderedStart, orderedEnd] =
+      requestedStart <= requestedEnd
+        ? [requestedStart, requestedEnd]
+        : [requestedEnd, requestedStart]
     const startDay = clampDay(orderedStart, availableStartDay, availableEndDay)
     const endDay = clampDay(orderedEnd, availableStartDay, availableEndDay)
 
@@ -133,7 +168,11 @@ export function resolveTimeframeSelection(snapshot: DashboardSnapshot, selection
   }
 
   const dayCount = PRESET_DAY_COUNTS[selection.preset]
-  const endDay = clampDay(selection.endDay || availableEndDay, availableStartDay, availableEndDay)
+  const endDay = clampDay(
+    selection.endDay || availableEndDay,
+    availableStartDay,
+    availableEndDay,
+  )
   const startDay = maxDay(addDays(endDay, -(dayCount - 1)), availableStartDay)
 
   return {
@@ -144,19 +183,25 @@ export function resolveTimeframeSelection(snapshot: DashboardSnapshot, selection
   }
 }
 
-function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelSummary[] {
+function summarizeModels(
+  modelRows: DashboardModelDailyUsage[],
+): DashboardModelSummary[] {
   const modelMap = new Map<string, DashboardModelSummary>()
 
   for (const row of modelRows) {
     const key = `${row.provider}:${row.model}`
     const current = modelMap.get(key)
     if (current) {
-      current.cacheReadTokens = (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
-      current.cacheWriteTokens = (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
+      current.cacheReadTokens =
+        (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
+      current.cacheWriteTokens =
+        (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
       current.cost += row.cost
       current.inputTokens = (current.inputTokens || 0) + (row.inputTokens || 0)
-      current.outputTokens = (current.outputTokens || 0) + (row.outputTokens || 0)
-      current.reasoningTokens = (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
+      current.outputTokens =
+        (current.outputTokens || 0) + (row.outputTokens || 0)
+      current.reasoningTokens =
+        (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
       current.requests += row.requests
       current.tokens += row.tokens
       continue
@@ -176,7 +221,10 @@ function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelS
     })
   }
 
-  return [...modelMap.values()].sort((left, right) => right.tokens - left.tokens || left.model.localeCompare(right.model))
+  return [...modelMap.values()].sort(
+    (left, right) =>
+      right.tokens - left.tokens || left.model.localeCompare(right.model),
+  )
 }
 
 function summarizeIssues(issueRows: DashboardIssueByDay[]) {
@@ -194,7 +242,10 @@ function summarizeIssues(issueRows: DashboardIssueByDay[]) {
   }
 
   return [...issueMap.values()]
-    .sort((left, right) => right.count - left.count || left.title.localeCompare(right.title))
+    .sort(
+      (left, right) =>
+        right.count - left.count || left.title.localeCompare(right.title),
+    )
     .map(({ count, severity, title }) => ({ count, severity, title }))
 }
 

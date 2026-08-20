@@ -1,5 +1,8 @@
 # Hermes token analytics plugin operations
 
+> [!IMPORTANT]
+> For installation or upgrade work, this document is background reference. The mandatory executable procedure is [`plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`](../plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md). Do not report a production install as complete until its recurring cron path has been created and verified.
+
 ## TL;DR
 
 This integration is now a **Hermes-native Python plugin**, not a Node or bash sidecar.
@@ -28,12 +31,12 @@ Operator setup is:
 
 If you just need the exact install sequence, use:
 
-- `docs/hermes-token-analytics-install-runbook.md`
+- `plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`
 
 The split of responsibility is intentional:
 
-- **Hermes cron** decides *when* the sync runs.
-- **The token analytics plugin** decides *how* the sync reads `state.db`, builds rollups, and posts them to the Worker ingest endpoint.
+- **Hermes cron** decides _when_ the sync runs.
+- **The token analytics plugin** decides _how_ the sync reads `state.db`, builds rollups, and posts them to the Worker ingest endpoint.
 
 ## What this plugin is
 
@@ -43,6 +46,20 @@ The token analytics integration exports Hermes usage rollups from `~/.hermes/sta
 - transport: authenticated HTTP `POST`
 - destination: `POST /api/ingest/hermes-usage`
 - dashboard storage: Cloudflare D1
+
+The payload contract is versioned. Schema version 2 adds `repositoryRollups` alongside the existing daily/hourly aggregates. The Worker validates that repository request/token totals reconcile with each aggregate bucket **before** deleting or replacing any D1 rows, so malformed dimensional data cannot partially erase a valid range.
+
+### Repository attribution semantics
+
+Repository attribution is intentionally session-level and requires no Hermes Agent code changes:
+
+- `exact`: Hermes persisted `sessions.git_repo_root`
+- `cwd-derived`: the plugin resolved the repository containing `sessions.cwd`
+- `unknown`: no repository metadata was available; usage appears as `Unattributed`
+
+Linked worktrees collapse to the Git common repository. Remote repository identities are normalized without userinfo, query strings, fragments, or local paths. Repositories without a usable remote are represented by a `local:<sha256>` identifier. The dashboard exposes attribution coverage and supports URL-backed `All repositories`, individual repository, and `Unattributed` filtering.
+
+The attribution unit is the Hermes session. If one session operates across several repositories, historical token totals cannot be split exactly because Hermes persists usage at session/API-route granularity rather than per tool call.
 
 This repo is the dashboard and ingest target. The operator-facing runtime is the Hermes plugin command surface, and the source-of-truth plugin files now live in this monorepo under `plugins/hermes-token-analytics/`:
 
@@ -138,16 +155,16 @@ The plugin uses environment variables as the operator-facing source of truth.
 
 ### Configuration reference
 
-| Variable | Required | Default | Example | What it controls |
-| --- | --- | --- | --- | --- |
-| `HERMES_TOKEN_ANALYTICS_DB_PATH` | No | `~/.hermes/state.db` | `/home/hermes/.hermes/state.db` | SQLite database path to read Hermes usage from. Override only if `state.db` lives elsewhere. |
-| `HERMES_TOKEN_ANALYTICS_DB_TIMEOUT` | No | `30` seconds | `30` | SQLite and network-facing timeout budget for sync operations. Increase if the host or endpoint is slow. |
-| `HERMES_TOKEN_ANALYTICS_ENDPOINT` | Yes | none | `https://token-usage-analytics.tevpro.workers.dev/api/ingest/hermes-usage` | Full HTTPS ingest URL for this dashboard. |
-| `HERMES_TOKEN_ANALYTICS_SHARED_SECRET` | Yes | none | `tok_live_xxx` | Bearer token sent to the Worker. Must match Worker `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`. |
-| `HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG` | No | `hermes-usage` | `prod-hermes-usage` | Stable workspace identifier used by the dashboard and D1 rows. Keep this stable once data exists. In the current dashboard UI, this workspace is presented as an agent selection. |
-| `HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME` | No | `Hermes Usage` | `Tevpro Hermes Usage` | Human-readable workspace label shown in the dashboard. In the current UI this is the friendly agent name users see. |
-| `HERMES_TOKEN_ANALYTICS_ENVIRONMENT` | No | `production` | `staging` | Environment label attached to imported rollups. |
-| `HERMES_TOKEN_ANALYTICS_DAYS_BACK` | No | `30` | `14` | Backfill window for each sync. The plugin rereads this many days and republishes that range. |
+| Variable                                | Required | Default              | Example                                                                    | What it controls                                                                                                                                                                  |
+| --------------------------------------- | -------- | -------------------- | -------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `HERMES_TOKEN_ANALYTICS_DB_PATH`        | No       | `~/.hermes/state.db` | `/home/hermes/.hermes/state.db`                                            | SQLite database path to read Hermes usage from. Override only if `state.db` lives elsewhere.                                                                                      |
+| `HERMES_TOKEN_ANALYTICS_DB_TIMEOUT`     | No       | `30` seconds         | `30`                                                                       | SQLite and network-facing timeout budget for sync operations. Increase if the host or endpoint is slow.                                                                           |
+| `HERMES_TOKEN_ANALYTICS_ENDPOINT`       | Yes      | none                 | `https://token-usage-analytics.tevpro.workers.dev/api/ingest/hermes-usage` | Full HTTPS ingest URL for this dashboard.                                                                                                                                         |
+| `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`  | Yes      | none                 | `tok_live_xxx`                                                             | Bearer token sent to the Worker. Must match Worker `HERMES_TOKEN_ANALYTICS_SHARED_SECRET`.                                                                                        |
+| `HERMES_TOKEN_ANALYTICS_WORKSPACE_SLUG` | No       | `hermes-usage`       | `prod-hermes-usage`                                                        | Stable workspace identifier used by the dashboard and D1 rows. Keep this stable once data exists. In the current dashboard UI, this workspace is presented as an agent selection. |
+| `HERMES_TOKEN_ANALYTICS_WORKSPACE_NAME` | No       | `Hermes Usage`       | `Tevpro Hermes Usage`                                                      | Human-readable workspace label shown in the dashboard. In the current UI this is the friendly agent name users see.                                                               |
+| `HERMES_TOKEN_ANALYTICS_ENVIRONMENT`    | No       | `production`         | `staging`                                                                  | Environment label attached to imported rollups.                                                                                                                                   |
+| `HERMES_TOKEN_ANALYTICS_DAYS_BACK`      | No       | `30`                 | `14`                                                                       | Backfill window for each sync. The plugin rereads this many days and republishes that range.                                                                                      |
 
 ### Recommended export block
 
@@ -279,7 +296,7 @@ Hermes cron owns schedule timing. The plugin command stays the same whether it i
 hermes cron status
 ```
 
-### Create a scheduled sync job
+### Create or reconcile the scheduled sync job
 
 Cadence recommendation: every 15 minutes.
 
@@ -289,24 +306,14 @@ Why 15 minutes:
 - `state.db` reads stay cheap
 - this remains periodic ingestion, not pretend real-time streaming
 
-Recommended setup:
+Do not run an unconditional create command from this background reference. Follow Step 5 of [`plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`](../plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md), which requires this order:
 
-1. Install the wrapper once:
-   ```bash
-   hermes token-analytics install-cron-wrapper
-   ```
-2. Create a script-backed Hermes cron job:
-   ```bash
-   hermes cron create "every 15m" \
-     --name "token-analytics-sync" \
-     --script token_analytics_sync.sh \
-     --no-agent
-   ```
+1. refresh the wrapper with `hermes token-analytics install-cron-wrapper --force`;
+2. inspect existing jobs with `hermes cron list --all`;
+3. create only when absent, edit/resume the existing canonical job when incorrect or paused, or remove duplicates; and
+4. verify the canonical job with `hermes cron run <job_id>`.
 
-If you prefer a prompt-driven job instead of a wrapper, keep the prompt thin and still route execution through `hermes token-analytics sync`.
-
-- schedule in Hermes cron
-- sync behavior in `hermes token-analytics sync`
+The required end state is exactly one enabled `token-analytics-sync` job using `token_analytics_sync.sh`.
 
 ### Inspect jobs
 

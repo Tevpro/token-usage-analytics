@@ -1,4 +1,7 @@
-import { formatHoustonDay, formatHoustonTimestamp } from '#/lib/dashboard-timezone'
+import {
+  formatHoustonDay,
+  formatHoustonTimestamp,
+} from '#/lib/dashboard-timezone'
 import { isValidIsoDay } from '#/lib/dashboard-timeframe'
 import type { TimeframeSelection } from '#/lib/dashboard-timeframe'
 import type { CloudflareAppEnv } from '#/lib/runtime'
@@ -8,6 +11,8 @@ import type {
   DashboardIssueByDay,
   DashboardModelDailyUsage,
   DashboardProjectOption,
+  DashboardRepositoryDailyRow,
+  DashboardRepositoryModelDailyUsage,
   DashboardSnapshot,
 } from '#/lib/token-analytics'
 import {
@@ -56,11 +61,6 @@ type ModelSummaryRow = {
   requests: number
   tokens: number
 }
-
-type ModelUsageRow = DashboardProjectOption &
-  ModelSummaryRow & {
-    day: string
-  }
 
 type IssueRow = DashboardProjectOption & {
   count: number
@@ -146,6 +146,7 @@ type SnapshotLoadResult = {
 }
 
 export type ExternalIngestPayload = {
+  schemaVersion?: number
   environment?: string
   generatedAt?: string
   rollups: Array<{
@@ -177,8 +178,28 @@ export type ExternalIngestPayload = {
     }>
     outputTokens: number
     p95LatencyMs?: number
+    reasoningTokens?: number
     requests: number
     totalTokens?: number
+    usageDate: string
+  }>
+  repositoryRollups?: Array<{
+    attributionStatus: 'exact' | 'cwd-derived' | 'unknown'
+    cachedTokens?: number
+    estimatedCostUsd?: number
+    inputTokens: number
+    models?: Array<{
+      estimatedCostUsd?: number
+      model: string
+      provider?: string
+      requests?: number
+      tokens?: number
+    }>
+    outputTokens: number
+    reasoningTokens?: number
+    repository: { key: string; name: string }
+    requests: number
+    totalTokens: number
     usageDate: string
   }>
   sourceLabel?: string
@@ -250,16 +271,17 @@ export async function ingestExternalRollupsToD1(
     ) => Promise<unknown>
   } = {},
 ): Promise<SyncResult> {
+  validateExternalIngestPayload(payload)
   const workspace = getExternalWorkspaceConfig(payload)
   const environment = payload.environment || env.APP_ENV || 'production'
   const nowMs = Date.parse(payload.generatedAt || '') || Date.now()
   const dayEntries = payload.rollups
     .map((rollup) => normalizeExternalRollup(rollup, workspace.provider))
     .sort((left, right) => left.day.localeCompare(right.day))
-
-  await dbEnsureWorkspace(env.DB, workspace, nowMs)
+  const includesRepositoryUsage = payload.schemaVersion === 2
 
   if (dayEntries.length === 0) {
+    await dbEnsureWorkspace(env.DB, workspace, nowMs)
     return {
       rowsWritten: 0,
       sourceLabel:
@@ -272,15 +294,26 @@ export async function ingestExternalRollupsToD1(
   const lastDay = dayEntries[dayEntries.length - 1].day
   const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
   const dailyActualCostAvailable = await hasDailyActualCostColumns(env.DB)
+  const repositoryTablesExist =
+    includesRepositoryUsage || (await dbHasRepositoryUsageTable(env.DB))
 
-  await env.DB.batch([
+  const deleteStatements = [
     env.DB.prepare(
       'DELETE FROM issue_events WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
     ).bind(workspace.id, firstDay, lastDay),
     env.DB.prepare(
       'DELETE FROM daily_usage_rollups WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
     ).bind(workspace.id, firstDay, lastDay),
-  ])
+  ]
+  if (repositoryTablesExist) {
+    deleteStatements.splice(
+      1,
+      0,
+      env.DB.prepare(
+        'DELETE FROM repository_daily_usage WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
+      ).bind(workspace.id, firstDay, lastDay),
+    )
+  }
 
   const statements: D1PreparedStatement[] = []
 
@@ -315,13 +348,26 @@ export async function ingestExternalRollupsToD1(
     }
   }
 
+  const repositoryStatements = buildRepositoryStatements(
+    env.DB,
+    workspace,
+    payload.repositoryRollups || [],
+    environment,
+    nowMs,
+  )
   const issueStatements = buildIssueStatements(
     env.DB,
     workspace.id,
     dayEntries,
     nowMs,
   )
-  await env.DB.batch([...statements, ...issueStatements])
+  await env.DB.batch([
+    buildEnsureWorkspaceStatement(env.DB, workspace, nowMs),
+    ...deleteStatements,
+    ...statements,
+    ...repositoryStatements,
+    ...issueStatements,
+  ])
   await captureCurrentDayPricingAfterIngest(
     env,
     dayEntries,
@@ -334,6 +380,310 @@ export async function ingestExternalRollupsToD1(
       payload.sourceLabel || `Live ${workspace.provider} plugin data`,
     syncedAt: new Date(nowMs).toISOString(),
   }
+}
+
+function validateExternalIngestPayload(payload: ExternalIngestPayload) {
+  if (!Array.isArray(payload.rollups))
+    throw new Error('rollups must be an array')
+  if (
+    payload.schemaVersion === 2 &&
+    !Array.isArray(payload.repositoryRollups)
+  ) {
+    throw new Error('schemaVersion 2 requires repositoryRollups')
+  }
+
+  const aggregateByBucket = new Map<
+    string,
+    ExternalIngestPayload['rollups'][number]
+  >()
+  for (const row of payload.rollups) {
+    validateUsageDate(row.usageDate)
+    if (aggregateByBucket.has(row.usageDate)) {
+      throw new Error(`duplicate aggregate bucket for ${row.usageDate}`)
+    }
+    validateMetrics(row.usageDate, 'aggregate', [
+      row.requests,
+      row.totalTokens ?? row.inputTokens + row.outputTokens,
+      row.inputTokens,
+      row.outputTokens,
+      row.cachedTokens ?? 0,
+      row.reasoningTokens ?? 0,
+      row.estimatedCostUsd ?? 0,
+    ])
+    const modelKeys = new Set<string>()
+    for (const model of row.models ?? []) {
+      const key = `${model.provider ?? ''}\0${model.model}`
+      if (!model.model || modelKeys.has(key)) {
+        throw new Error(`duplicate aggregate model for ${row.usageDate}`)
+      }
+      modelKeys.add(key)
+      validateMetrics(row.usageDate, 'aggregate model', [
+        model.requests ?? 0,
+        model.tokens ?? 0,
+        model.estimatedCostUsd ?? 0,
+      ])
+    }
+    aggregateByBucket.set(row.usageDate, row)
+  }
+
+  const repositories = payload.repositoryRollups
+  if (repositories === undefined) return
+  if (payload.schemaVersion !== 2 || !Array.isArray(repositories)) {
+    throw new Error('repositoryRollups require schemaVersion 2')
+  }
+
+  type Totals = {
+    requests: number
+    totalTokens: number
+    inputTokens: number
+    outputTokens: number
+    cachedTokens: number
+    reasoningTokens: number
+    estimatedCostUsd: number
+  }
+  const repositoryByBucket = new Map<string, Totals>()
+  const repositoryRollupKeys = new Set<string>()
+  const repositoryNames = new Map<string, string>()
+  for (const row of repositories) {
+    validateUsageDate(row.usageDate)
+    if (!['exact', 'cwd-derived', 'unknown'].includes(row.attributionStatus)) {
+      throw new Error(
+        `invalid repository attribution status for ${row.usageDate}`,
+      )
+    }
+    const repositoryKey = row.repository.key || ''
+    const repositoryName = row.repository.name || ''
+    const isUnattributed = repositoryKey === 'unattributed'
+    const isPrivacySafeKey =
+      isUnattributed ||
+      /^local:[a-f0-9]{64}$/.test(repositoryKey) ||
+      (!repositoryKey.includes('://') &&
+        !repositoryKey.includes('@') &&
+        !repositoryKey.includes('\\') &&
+        /^[^/\s]+\/.+/.test(repositoryKey))
+    if (
+      !isPrivacySafeKey ||
+      !repositoryName ||
+      /[\\/]/.test(repositoryName) ||
+      (row.attributionStatus === 'unknown') !== isUnattributed
+    ) {
+      throw new Error(
+        `invalid privacy-safe repository identity for ${row.usageDate}`,
+      )
+    }
+    const rollupKey = `${row.usageDate}\0${row.attributionStatus}\0${repositoryKey}`
+    if (repositoryRollupKeys.has(rollupKey))
+      throw new Error(`duplicate repository rollup for ${row.usageDate}`)
+    repositoryRollupKeys.add(rollupKey)
+    const existingName = repositoryNames.get(repositoryKey)
+    if (existingName && existingName !== repositoryName) {
+      throw new Error(
+        `duplicate repository identity has conflicting names for ${row.usageDate}`,
+      )
+    }
+    repositoryNames.set(repositoryKey, repositoryName)
+
+    const rowTotals: Totals = {
+      requests: row.requests,
+      totalTokens: row.totalTokens,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cachedTokens: row.cachedTokens ?? 0,
+      reasoningTokens: row.reasoningTokens ?? 0,
+      estimatedCostUsd: row.estimatedCostUsd ?? 0,
+    }
+    validateMetrics(row.usageDate, 'repository', Object.values(rowTotals))
+
+    if (!Array.isArray(row.models))
+      throw new Error(`repository models must be complete for ${row.usageDate}`)
+    const modelKeys = new Set<string>()
+    const modelTotals = { requests: 0, tokens: 0, cost: 0 }
+    for (const model of row.models) {
+      const provider = model.provider ?? ''
+      const key = `${provider}\0${model.model}`
+      if (!model.model || modelKeys.has(key))
+        throw new Error(`duplicate repository model for ${row.usageDate}`)
+      modelKeys.add(key)
+      const values = [
+        model.requests ?? 0,
+        model.tokens ?? 0,
+        model.estimatedCostUsd ?? 0,
+      ]
+      validateMetrics(row.usageDate, 'repository model', values)
+      modelTotals.requests += values[0]
+      modelTotals.tokens += values[1]
+      modelTotals.cost += values[2]
+    }
+    if (
+      modelTotals.requests !== row.requests ||
+      modelTotals.tokens !== row.totalTokens ||
+      !costsEqual(
+        modelTotals.cost,
+        rowTotals.estimatedCostUsd,
+        row.models.length,
+      )
+    ) {
+      throw new Error(`repository models do not reconcile for ${row.usageDate}`)
+    }
+
+    const current = repositoryByBucket.get(row.usageDate) ?? {
+      requests: 0,
+      totalTokens: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      reasoningTokens: 0,
+      estimatedCostUsd: 0,
+    }
+    for (const metric of Object.keys(current) as Array<keyof Totals>)
+      current[metric] += rowTotals[metric]
+    repositoryByBucket.set(row.usageDate, current)
+  }
+
+  for (const [bucket, aggregate] of aggregateByBucket) {
+    const repository = repositoryByBucket.get(bucket)
+    const aggregateTotals: Totals = {
+      requests: aggregate.requests,
+      totalTokens:
+        aggregate.totalTokens ?? aggregate.inputTokens + aggregate.outputTokens,
+      inputTokens: aggregate.inputTokens,
+      outputTokens: aggregate.outputTokens,
+      cachedTokens: aggregate.cachedTokens ?? 0,
+      reasoningTokens: aggregate.reasoningTokens ?? 0,
+      estimatedCostUsd: aggregate.estimatedCostUsd ?? 0,
+    }
+    if (
+      !repository ||
+      (Object.keys(aggregateTotals) as Array<keyof Totals>).some((metric) =>
+        metric === 'estimatedCostUsd'
+          ? !costsEqual(
+              repository[metric],
+              aggregateTotals[metric],
+              repositories.filter((row) => row.usageDate === bucket).length,
+            )
+          : repository[metric] !== aggregateTotals[metric],
+      )
+    ) {
+      throw new Error(`repository rollups do not reconcile for ${bucket}`)
+    }
+  }
+  if (repositoryByBucket.size !== aggregateByBucket.size) {
+    throw new Error(
+      'repository rollups do not reconcile with aggregate buckets',
+    )
+  }
+}
+
+function validateMetrics(bucket: string, kind: string, values: number[]) {
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+    throw new Error(`invalid ${kind} metrics for ${bucket}`)
+  }
+}
+
+function costsEqual(left: number, right: number, roundedComponentCount = 1) {
+  // Publisher costs are rounded to four decimals per component, so their sum
+  // can drift from a separately rounded bucket total by half a unit each.
+  const tolerance = (roundedComponentCount + 1) * 0.00005
+  return Math.abs(left - right) <= tolerance + Number.EPSILON
+}
+
+function validateUsageDate(value: string) {
+  const day = value.slice(0, 10)
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(day)
+  if (!match) throw new Error(`invalid usageDate: ${value}`)
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const date = Number(match[3])
+  const parsed = new Date(Date.UTC(year, month - 1, date))
+  const validDay =
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === date
+  const canonicalBucket =
+    value === day || /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):00:00Z$/.test(value)
+  if (!validDay || !canonicalBucket) {
+    throw new Error(`invalid usageDate: ${value}`)
+  }
+}
+
+function buildRepositoryStatements(
+  db: D1Database,
+  workspace: WorkspaceRecord,
+  rows: NonNullable<ExternalIngestPayload['repositoryRollups']>,
+  environment: string,
+  nowMs: number,
+) {
+  const statements: D1PreparedStatement[] = []
+  for (const row of rows) {
+    const unattributed = row.repository.key === 'unattributed'
+    const repositoryId = unattributed
+      ? null
+      : `${workspace.id}:repository:${row.repository.key}`
+    if (repositoryId) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO repositories (id, workspace_id, repository_key, display_name, created_at)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(workspace_id, repository_key) DO UPDATE SET display_name = excluded.display_name`,
+          )
+          .bind(
+            repositoryId,
+            workspace.id,
+            row.repository.key,
+            row.repository.name,
+            nowMs,
+          ),
+      )
+    }
+    const rollupId = `${workspace.id}:repository-usage:${row.usageDate}:${row.attributionStatus}:${row.repository.key}`
+    statements.push(
+      db
+        .prepare(
+          `INSERT INTO repository_daily_usage (
+        id, workspace_id, repository_id, usage_date, environment, attribution_status,
+        requests, total_tokens, input_tokens, output_tokens, cached_tokens, reasoning_tokens,
+        estimated_cost_usd, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .bind(
+          rollupId,
+          workspace.id,
+          repositoryId,
+          row.usageDate,
+          environment,
+          row.attributionStatus,
+          row.requests,
+          row.totalTokens,
+          row.inputTokens,
+          row.outputTokens,
+          row.cachedTokens || 0,
+          row.reasoningTokens || 0,
+          roundCurrency(row.estimatedCostUsd || 0),
+          nowMs,
+        ),
+    )
+    for (const model of row.models || []) {
+      statements.push(
+        db
+          .prepare(
+            `INSERT INTO repository_model_daily_usage
+          (id, repository_rollup_id, model, provider, requests, tokens, estimated_cost_usd)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .bind(
+            `${rollupId}:${model.provider || workspace.provider}:${model.model}`,
+            rollupId,
+            model.model,
+            model.provider || workspace.provider,
+            model.requests || 0,
+            model.tokens || 0,
+            roundCurrency(model.estimatedCostUsd || 0),
+          ),
+      )
+    }
+  }
+  return statements
 }
 
 export async function syncOpenAiUsageToD1(
@@ -422,8 +772,8 @@ export async function syncOpenAiUsageToD1(
   )
   const nowMs = Date.now()
 
-  await dbEnsureWorkspace(env.DB, workspace, nowMs)
   if (dayEntries.length === 0) {
+    await dbEnsureWorkspace(env.DB, workspace, nowMs)
     return {
       rowsWritten: 0,
       sourceLabel: 'OpenAI connected, no usage returned',
@@ -435,15 +785,24 @@ export async function syncOpenAiUsageToD1(
   const lastDay = dayEntries[dayEntries.length - 1].day
   const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
   const dailyActualCostAvailable = await hasDailyActualCostColumns(env.DB)
-
-  await env.DB.batch([
+  const repositoryTablesExist = await dbHasRepositoryUsageTable(env.DB)
+  const deleteStatements = [
     env.DB.prepare(
       'DELETE FROM issue_events WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
     ).bind(workspace.id, firstDay, lastDay),
     env.DB.prepare(
       'DELETE FROM daily_usage_rollups WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
     ).bind(workspace.id, firstDay, lastDay),
-  ])
+  ]
+  if (repositoryTablesExist) {
+    deleteStatements.splice(
+      1,
+      0,
+      env.DB.prepare(
+        'DELETE FROM repository_daily_usage WHERE workspace_id = ? AND usage_date BETWEEN ? AND ?',
+      ).bind(workspace.id, firstDay, lastDay),
+    )
+  }
 
   const statements: D1PreparedStatement[] = []
 
@@ -490,7 +849,12 @@ export async function syncOpenAiUsageToD1(
     dayEntries,
     nowMs,
   )
-  await env.DB.batch([...statements, ...issueStatements])
+  await env.DB.batch([
+    buildEnsureWorkspaceStatement(env.DB, workspace, nowMs),
+    ...deleteStatements,
+    ...statements,
+    ...issueStatements,
+  ])
   await captureCurrentDayPricingAfterIngest(
     env,
     dayEntries,
@@ -681,21 +1045,69 @@ async function loadSnapshotFromD1(
 ): Promise<DashboardSnapshot> {
   const workspaceIds = selections.map((selection) => selection.workspace.id)
   const dailyActualCostAvailable = await hasDailyActualCostColumns(env.DB)
-  const rows = await loadDailyRollups(
-    env.DB,
-    workspaceIds,
-    queryRange.startDay,
-    queryRange.endDay,
-    dailyActualCostAvailable,
+  const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
+  const repositoryTablesExist = await dbHasRepositoryUsageTable(env.DB)
+  const readStatements = [
+    prepareDailyRollupsStatement(
+      env.DB,
+      workspaceIds,
+      queryRange.startDay,
+      queryRange.endDay,
+      dailyActualCostAvailable,
+    ),
+    prepareModelUsageByDayStatement(
+      env.DB,
+      workspaceIds,
+      queryRange.startDay,
+      queryRange.endDay,
+      modelTokenDimensionsAvailable,
+    ),
+    ...(repositoryTablesExist
+      ? [
+          prepareRepositoryUsageByDayStatement(
+            env.DB,
+            workspaceIds,
+            queryRange.startDay,
+            queryRange.endDay,
+          ),
+          prepareRepositoryModelUsageByDayStatement(
+            env.DB,
+            workspaceIds,
+            queryRange.startDay,
+            queryRange.endDay,
+          ),
+        ]
+      : []),
+    prepareIssuesStatement(
+      env.DB,
+      workspaceIds,
+      queryRange.startDay,
+      queryRange.endDay,
+    ),
+  ]
+  const readResults = await env.DB.batch(readStatements)
+  const rows = readResults[0].results as unknown as DailyRollupRow[]
+  const rawModelRowsByDay = readResults[1]
+    .results as unknown as DashboardModelDailyUsage[]
+  const rawRepositoryRows = repositoryTablesExist
+    ? (readResults[2].results as unknown as DashboardRepositoryDailyRow[])
+    : []
+  const rawRepositoryModelRows = repositoryTablesExist
+    ? (readResults[3]
+        .results as unknown as DashboardRepositoryModelDailyUsage[])
+    : []
+  const issuesByDay = readResults[repositoryTablesExist ? 4 : 2]
+    .results as unknown as IssueRow[]
+  const availableProjects = selections.map(
+    ({ latestCreatedAt, latestDay, workspace }) => ({
+      latestGeneratedAt: new Date(latestCreatedAt).toISOString(),
+      latestRollupDay: latestDay,
+      projectId: workspace.id,
+      projectName: workspace.name,
+      projectProvider: workspace.provider,
+      projectSlug: workspace.slug,
+    }),
   )
-  const availableProjects = selections.map(({ latestCreatedAt, latestDay, workspace }) => ({
-    latestGeneratedAt: new Date(latestCreatedAt).toISOString(),
-    latestRollupDay: latestDay,
-    projectId: workspace.id,
-    projectName: workspace.name,
-    projectProvider: workspace.provider,
-    projectSlug: workspace.slug,
-  }))
   const latestCreatedAt = Math.max(
     Math.max(...rows.map((row) => row.createdAt || 0), 0),
     Math.max(
@@ -731,16 +1143,6 @@ async function loadSnapshotFromD1(
     })
   }
 
-  const firstDay = getRangeStart(rows)
-  const lastDay = getRangeEnd(rows)
-  const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
-  const rawModelRowsByDay = await loadModelUsageByDay(
-    env.DB,
-    workspaceIds,
-    firstDay,
-    lastDay,
-    modelTokenDimensionsAvailable,
-  )
   const dailyRows = rows.filter((row) => !isTimestampBucket(row.day))
   const storedHourlyRows = rows.filter((row) => isTimestampBucket(row.day))
   const dailyModelRowsByDay = rawModelRowsByDay.filter(
@@ -749,7 +1151,18 @@ async function loadSnapshotFromD1(
   const hourlyModelRowsByDay = rawModelRowsByDay.filter((row) =>
     isTimestampBucket(row.day),
   )
-  const issuesByDay = await loadIssues(env.DB, workspaceIds, firstDay, lastDay)
+  const repositoryRows = rawRepositoryRows.filter(
+    (row) => !isTimestampBucket(row.day),
+  )
+  const hourlyRepositoryRows = rawRepositoryRows.filter((row) =>
+    isTimestampBucket(row.day),
+  )
+  const repositoryModelRows = rawRepositoryModelRows.filter(
+    (row) => !isTimestampBucket(row.day),
+  )
+  const hourlyRepositoryModelRows = rawRepositoryModelRows.filter((row) =>
+    isTimestampBucket(row.day),
+  )
   const hourlyRows =
     (await safelyLoadOpenAiHourlyRows(env, selections, rows)) ||
     storedHourlyRows
@@ -761,16 +1174,7 @@ async function loadSnapshotFromD1(
     dailyModelRowsByDay.length > 0
       ? dailyModelRowsByDay
       : aggregateModelRowsByDay(hourlyModelRowsByDay)
-  const models =
-    hourlyModelRowsByDay.length > 0
-      ? summarizeModelRows(resolvedModelRowsByDay)
-      : await loadModelSummary(
-          env.DB,
-          workspaceIds,
-          firstDay,
-          lastDay,
-          modelTokenDimensionsAvailable,
-        )
+  const models = summarizeModelRows(resolvedModelRowsByDay)
   const publicPricing = await loadPublicModelPricing(
     env,
     resolvedModelRowsByDay.map((model) => ({
@@ -793,6 +1197,14 @@ async function loadSnapshotFromD1(
     models,
     modelRowsByDay: resolvedModelRowsByDay,
     publicPricing,
+    hourlyRepositoryModelRows:
+      hourlyRepositoryModelRows.length > 0
+        ? hourlyRepositoryModelRows
+        : undefined,
+    hourlyRepositoryRows:
+      hourlyRepositoryRows.length > 0 ? hourlyRepositoryRows : undefined,
+    repositoryModelRows,
+    repositoryRows,
     selectedProjectIds: availableProjects.map((project) => project.projectId),
     sourceLabel,
     statusNote: buildCombinedStatusNote(selections),
@@ -849,7 +1261,15 @@ async function dbEnsureWorkspace(
   workspace: WorkspaceRecord,
   lastIngestedAt?: number,
 ) {
-  await db
+  await buildEnsureWorkspaceStatement(db, workspace, lastIngestedAt).run()
+}
+
+function buildEnsureWorkspaceStatement(
+  db: D1Database,
+  workspace: WorkspaceRecord,
+  lastIngestedAt?: number,
+) {
+  return db
     .prepare(
       `INSERT INTO workspaces (id, slug, name, provider, created_at, last_ingested_at)
        VALUES (?, ?, ?, ?, ?, ?)
@@ -867,7 +1287,15 @@ async function dbEnsureWorkspace(
       Date.now(),
       lastIngestedAt || null,
     )
-    .run()
+}
+
+async function dbHasRepositoryUsageTable(db: D1Database) {
+  const result = await db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'repository_daily_usage'",
+    )
+    .all<{ name: string }>()
+  return result.results.length > 0
 }
 
 function buildEmptyRangeSnapshot(input: {
@@ -956,17 +1384,13 @@ function buildHeartbeatOnlySnapshot(input: {
   })
 }
 
-async function loadDailyRollups(
+function prepareDailyRollupsStatement(
   db: D1Database,
   workspaceIds: string[],
   startDay: string,
   endDay: string,
   actualCostAvailable: boolean,
 ) {
-  if (workspaceIds.length === 0) {
-    return [] satisfies DailyRollupRow[]
-  }
-
   const endDayExclusive = shiftUtcDay(endDay, 1)
   const placeholders = workspaceIds.map(() => '?').join(', ')
   const actualCosts = actualCostAvailable
@@ -976,7 +1400,7 @@ async function loadDailyRollups(
     : `NULL as actualCostUsd,
        0 as actualCostObservedSessions,
        0 as actualCostObservedTokens,`
-  const result = await db
+  return db
     .prepare(
       `SELECT
          daily_usage_rollups.usage_date as day,
@@ -1001,67 +1425,15 @@ async function loadDailyRollups(
        ORDER BY daily_usage_rollups.usage_date ASC, workspaces.name ASC`,
     )
     .bind(...workspaceIds, startDay, endDayExclusive)
-    .all<DailyRollupRow>()
-
-  return result.results
 }
 
-async function loadModelSummary(
+function prepareModelUsageByDayStatement(
   db: D1Database,
   workspaceIds: string[],
   startDay: string,
   endDay: string,
   dimensionsAvailable: boolean,
 ) {
-  if (workspaceIds.length === 0) {
-    return [] satisfies ModelSummaryRow[]
-  }
-
-  const placeholders = workspaceIds.map(() => '?').join(', ')
-  const dimensions = dimensionsAvailable
-    ? `SUM(model_daily_usage.input_tokens) as inputTokens,
-       SUM(model_daily_usage.output_tokens) as outputTokens,
-       SUM(model_daily_usage.cache_read_tokens) as cacheReadTokens,
-       SUM(model_daily_usage.cache_write_tokens) as cacheWriteTokens,
-       SUM(model_daily_usage.reasoning_tokens) as reasoningTokens,`
-    : `0 as inputTokens,
-       0 as outputTokens,
-       0 as cacheReadTokens,
-       0 as cacheWriteTokens,
-       0 as reasoningTokens,`
-  const result = await db
-    .prepare(
-      `SELECT
-         model_daily_usage.model as model,
-         model_daily_usage.provider as provider,
-         SUM(model_daily_usage.requests) as requests,
-         SUM(model_daily_usage.tokens) as tokens,
-         ${dimensions}
-         SUM(model_daily_usage.estimated_cost_usd) as cost
-       FROM model_daily_usage
-       INNER JOIN daily_usage_rollups ON daily_usage_rollups.id = model_daily_usage.rollup_id
-       WHERE daily_usage_rollups.workspace_id IN (${placeholders})
-         AND substr(daily_usage_rollups.usage_date, 1, 10) BETWEEN ? AND ?
-       GROUP BY model_daily_usage.model, model_daily_usage.provider
-       ORDER BY tokens DESC`,
-    )
-    .bind(...workspaceIds, startDay, endDay)
-    .all<ModelSummaryRow>()
-
-  return result.results
-}
-
-async function loadModelUsageByDay(
-  db: D1Database,
-  workspaceIds: string[],
-  startDay: string,
-  endDay: string,
-  dimensionsAvailable: boolean,
-) {
-  if (workspaceIds.length === 0) {
-    return [] satisfies DashboardModelDailyUsage[]
-  }
-
   const placeholders = workspaceIds.map(() => '?').join(', ')
   const dimensions = dimensionsAvailable
     ? `model_daily_usage.input_tokens as inputTokens,
@@ -1074,7 +1446,7 @@ async function loadModelUsageByDay(
        0 as cacheReadTokens,
        0 as cacheWriteTokens,
        0 as reasoningTokens,`
-  const result = await db
+  return db
     .prepare(
       `SELECT
          daily_usage_rollups.usage_date as day,
@@ -1096,23 +1468,78 @@ async function loadModelUsageByDay(
        ORDER BY daily_usage_rollups.usage_date ASC, model_daily_usage.tokens DESC`,
     )
     .bind(...workspaceIds, startDay, endDay)
-    .all<ModelUsageRow>()
-
-  return result.results satisfies DashboardModelDailyUsage[]
 }
 
-async function loadIssues(
+function prepareRepositoryUsageByDayStatement(
   db: D1Database,
   workspaceIds: string[],
   startDay: string,
   endDay: string,
 ) {
-  if (workspaceIds.length === 0) {
-    return [] satisfies IssueRow[]
-  }
-
   const placeholders = workspaceIds.map(() => '?').join(', ')
-  const result = await db
+  return db
+    .prepare(
+      `SELECT repository_daily_usage.usage_date as day,
+            repository_daily_usage.attribution_status as attributionStatus,
+            repository_daily_usage.requests as requests,
+            repository_daily_usage.total_tokens as totalTokens,
+            repository_daily_usage.input_tokens as inputTokens,
+            repository_daily_usage.output_tokens as outputTokens,
+            repository_daily_usage.cached_tokens as cachedTokens,
+            repository_daily_usage.estimated_cost_usd as cost,
+            workspaces.id as projectId, workspaces.name as projectName,
+            workspaces.provider as projectProvider, workspaces.slug as projectSlug,
+            COALESCE(repositories.repository_key, 'unattributed') as repositoryId,
+            COALESCE(repositories.repository_key, 'unattributed') as repositoryKey,
+            COALESCE(repositories.display_name, 'Unattributed') as repositoryName
+       FROM repository_daily_usage
+       INNER JOIN workspaces ON workspaces.id = repository_daily_usage.workspace_id
+       LEFT JOIN repositories ON repositories.id = repository_daily_usage.repository_id
+       WHERE repository_daily_usage.workspace_id IN (${placeholders})
+         AND substr(repository_daily_usage.usage_date, 1, 10) BETWEEN ? AND ?
+       ORDER BY repository_daily_usage.usage_date ASC, repositoryName ASC`,
+    )
+    .bind(...workspaceIds, startDay, endDay)
+}
+
+function prepareRepositoryModelUsageByDayStatement(
+  db: D1Database,
+  workspaceIds: string[],
+  startDay: string,
+  endDay: string,
+) {
+  const placeholders = workspaceIds.map(() => '?').join(', ')
+  return db
+    .prepare(
+      `SELECT repository_daily_usage.usage_date as day,
+            repository_daily_usage.attribution_status as attributionStatus,
+            repository_model_daily_usage.model as model,
+            repository_model_daily_usage.provider as provider,
+            repository_model_daily_usage.requests as requests,
+            repository_model_daily_usage.tokens as tokens,
+            repository_model_daily_usage.estimated_cost_usd as cost,
+            workspaces.id as projectId, workspaces.name as projectName,
+            workspaces.provider as projectProvider, workspaces.slug as projectSlug,
+            COALESCE(repositories.repository_key, 'unattributed') as repositoryId
+       FROM repository_model_daily_usage
+       INNER JOIN repository_daily_usage ON repository_daily_usage.id = repository_model_daily_usage.repository_rollup_id
+       INNER JOIN workspaces ON workspaces.id = repository_daily_usage.workspace_id
+       LEFT JOIN repositories ON repositories.id = repository_daily_usage.repository_id
+       WHERE repository_daily_usage.workspace_id IN (${placeholders})
+         AND substr(repository_daily_usage.usage_date, 1, 10) BETWEEN ? AND ?
+       ORDER BY repository_daily_usage.usage_date ASC, repository_model_daily_usage.tokens DESC`,
+    )
+    .bind(...workspaceIds, startDay, endDay)
+}
+
+function prepareIssuesStatement(
+  db: D1Database,
+  workspaceIds: string[],
+  startDay: string,
+  endDay: string,
+) {
+  const placeholders = workspaceIds.map(() => '?').join(', ')
+  return db
     .prepare(
       `SELECT issue_events.usage_date as day, issue_events.title as title, issue_events.count as count, issue_events.severity as severity,
               workspaces.id as projectId, workspaces.name as projectName, workspaces.provider as projectProvider, workspaces.slug as projectSlug
@@ -1123,27 +1550,6 @@ async function loadIssues(
        ORDER BY issue_events.occurred_at DESC`,
     )
     .bind(...workspaceIds, startDay, endDay)
-    .all<IssueRow>()
-
-  return result.results
-}
-
-function getRangeStart(rows: DailyRollupRow[]) {
-  return (
-    rows
-      .map((row) => row.day.slice(0, 10))
-      .sort()
-      .at(0) || ''
-  )
-}
-
-function getRangeEnd(rows: DailyRollupRow[]) {
-  return (
-    rows
-      .map((row) => row.day.slice(0, 10))
-      .sort()
-      .at(-1) || ''
-  )
 }
 
 function isTimestampBucket(value: string) {
@@ -1192,12 +1598,16 @@ function aggregateModelRowsByDay(rows: DashboardModelDailyUsage[]) {
     const key = `${row.projectId}:${day}:${row.provider}:${row.model}`
     const current = rowMap.get(key)
     if (current) {
-      current.cacheReadTokens = (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
-      current.cacheWriteTokens = (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
+      current.cacheReadTokens =
+        (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
+      current.cacheWriteTokens =
+        (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
       current.cost += row.cost
       current.inputTokens = (current.inputTokens || 0) + (row.inputTokens || 0)
-      current.outputTokens = (current.outputTokens || 0) + (row.outputTokens || 0)
-      current.reasoningTokens = (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
+      current.outputTokens =
+        (current.outputTokens || 0) + (row.outputTokens || 0)
+      current.reasoningTokens =
+        (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
       current.requests += row.requests
       current.tokens += row.tokens
       continue

@@ -1,5 +1,8 @@
 # Hermes token analytics plugin source
 
+> [!IMPORTANT]
+> **Required for every production install or upgrade:** follow [`REQUIRED_INSTALLATION_CHECKLIST.md`](REQUIRED_INSTALLATION_CHECKLIST.md) through scheduled-path verification. Copying/enabling this directory and completing one manual sync is not a complete production installation.
+
 This directory is the source-of-truth copy of the Hermes token analytics plugin inside the monorepo.
 
 > [!WARNING]
@@ -12,7 +15,7 @@ This directory is the source-of-truth copy of the Hermes token analytics plugin 
 - `plugins/hermes-token-analytics/` — the plugin files as they should exist inside a Hermes checkout
 - `plugins/hermes-token-analytics/tests/` — plugin validation tests
 - `plugins/hermes-token-analytics/scripts/install-local-plugin.sh` — helper to copy the plugin into a local Hermes repo checkout
-- `docs/hermes-token-analytics-install-runbook.md` — exact operator procedure for install, validation, and cron setup
+- `REQUIRED_INSTALLATION_CHECKLIST.md` — exact operator procedure for install, validation, and cron setup
 
 ## Why this exists
 
@@ -24,6 +27,18 @@ We wanted one repo to own:
 - the operator docs
 
 That avoids the old split-brain setup where the product repo and the Hermes implementation lived in different places.
+
+## Repository attribution
+
+Each sync publishes the existing aggregate usage plus a reconciled repository dimension. Attribution uses only metadata already persisted by Hermes:
+
+1. `sessions.git_repo_root` when present (`exact`)
+2. the Git repository containing `sessions.cwd` (`cwd-derived`)
+3. an explicit `Unattributed` bucket (`unknown`)
+
+Git linked worktrees normalize to their common repository. Remote-backed repositories are identified by a credential-free host/owner/name key; local-only repositories use a SHA-256 identity. Raw filesystem paths and remote credentials are never sent to the dashboard.
+
+Repository totals are session-level: all tokens from a session belong to its resolved repository. The plugin does not claim per-tool-call precision when a session moves between repositories. Older Hermes schemas without the repository columns continue syncing and place their usage in `Unattributed`.
 
 ## Local test command
 
@@ -59,4 +74,4 @@ hermes plugins enable hermes-token-analytics
 hermes gateway restart
 ```
 
-A successful manual `hermes token-analytics sync` proves the plugin works manually. It does **not** prove continuous reporting is active. For that, create the cron job described in `docs/hermes-token-analytics-install-runbook.md`.
+A successful manual `hermes token-analytics sync` proves the plugin works manually. It does **not** prove continuous reporting is active. For that, create the cron job described in `REQUIRED_INSTALLATION_CHECKLIST.md`.
