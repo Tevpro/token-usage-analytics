@@ -42,6 +42,7 @@ export function filterSnapshotByProjects(snapshot: DashboardSnapshot, selectedPr
     issuesByDay,
     models: summarizeModels(modelRowsByDay),
     modelRowsByDay,
+    publicPricing: snapshot.filters.publicPricing,
     rangeLabel: snapshot.headline.rangeLabel,
     selectedProjectIds: filteredProjectIds,
     sourceLabel: snapshot.headline.sourceLabel,
@@ -74,16 +75,26 @@ function summarizeModels(modelRows: DashboardModelDailyUsage[]): DashboardModelS
     const key = `${row.provider}:${row.model}`
     const current = modelMap.get(key)
     if (current) {
+      current.cacheReadTokens = (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
+      current.cacheWriteTokens = (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
       current.cost += row.cost
+      current.inputTokens = (current.inputTokens || 0) + (row.inputTokens || 0)
+      current.outputTokens = (current.outputTokens || 0) + (row.outputTokens || 0)
+      current.reasoningTokens = (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
       current.requests += row.requests
       current.tokens += row.tokens
       continue
     }
 
     modelMap.set(key, {
+      cacheReadTokens: row.cacheReadTokens,
+      cacheWriteTokens: row.cacheWriteTokens,
       cost: row.cost,
+      inputTokens: row.inputTokens,
       model: row.model,
+      outputTokens: row.outputTokens,
       provider: row.provider,
+      reasoningTokens: row.reasoningTokens,
       requests: row.requests,
       tokens: row.tokens,
     })

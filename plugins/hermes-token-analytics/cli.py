@@ -376,10 +376,16 @@ def build_payload(config: TokenAnalyticsConfig) -> dict[str, Any]:
     for row in models:
         models_by_day.setdefault(str(row["usage_date"]), []).append(
             {
+                "cacheReadTokens": int(row["cache_read_tokens"] or 0),
+                "cacheWriteTokens": int(row["cache_write_tokens"] or 0),
+                "estimatedCostUsd": round(float(row["cost_usd"] or 0), 4),
+                "inputTokens": int(row["input_tokens"] or 0),
                 "model": row["model"] or "unknown-model",
+                "outputTokens": int(row["output_tokens"] or 0),
+                "provider": _infer_model_provider(str(row["model"] or "")),
+                "reasoningTokens": int(row["reasoning_tokens"] or 0),
                 "requests": int(row["api_calls"] or 0),
                 "tokens": int(row["total_tokens"] or 0),
-                "estimatedCostUsd": round(float(row["cost_usd"] or 0), 4),
             }
         )
 
@@ -465,7 +471,8 @@ def _fetch_session_metrics(connection: sqlite3.Connection, *, since: float | Non
             COALESCE(api_call_count, 0) AS api_calls,
             COALESCE(input_tokens, 0) AS input_tokens,
             COALESCE(output_tokens, 0) AS output_tokens,
-            COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
+            COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
+            COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
             COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
             COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
         FROM sessions
@@ -500,6 +507,8 @@ def _aggregate_usage_rows(
                 "api_calls": 0,
                 "input_tokens": 0,
                 "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
                 "cached_tokens": 0,
                 "reasoning_tokens": 0,
                 "total_tokens": 0,
@@ -509,9 +518,13 @@ def _aggregate_usage_rows(
         bucket["api_calls"] += int(row["api_calls"] or 0)
         bucket["input_tokens"] += int(row["input_tokens"] or 0)
         bucket["output_tokens"] += int(row["output_tokens"] or 0)
-        bucket["cached_tokens"] += int(row["cached_tokens"] or 0)
+        cache_read_tokens = int(row["cache_read_tokens"] or 0)
+        cache_write_tokens = int(row["cache_write_tokens"] or 0)
+        bucket["cache_read_tokens"] += cache_read_tokens
+        bucket["cache_write_tokens"] += cache_write_tokens
+        bucket["cached_tokens"] += cache_read_tokens + cache_write_tokens
         bucket["reasoning_tokens"] += int(row["reasoning_tokens"] or 0)
-        bucket["total_tokens"] += int(row["input_tokens"] or 0) + int(row["output_tokens"] or 0) + int(row["cached_tokens"] or 0) + int(row["reasoning_tokens"] or 0)
+        bucket["total_tokens"] += int(row["input_tokens"] or 0) + int(row["output_tokens"] or 0) + cache_read_tokens + cache_write_tokens + int(row["reasoning_tokens"] or 0)
         bucket["cost_usd"] += float(row["cost_usd"] or 0)
 
     sort_key = (lambda item: (item["usage_date"], -item["total_tokens"], item["model"])) if include_model else (lambda item: item["usage_date"])
@@ -588,7 +601,8 @@ def fetch_hourly_model_rollups(
                 COALESCE(api_call_count, 0) AS api_calls,
                 COALESCE(input_tokens, 0) AS input_tokens,
                 COALESCE(output_tokens, 0) AS output_tokens,
-                COALESCE(cache_read_tokens, 0) + COALESCE(cache_write_tokens, 0) AS cached_tokens,
+                COALESCE(cache_read_tokens, 0) AS cache_read_tokens,
+                COALESCE(cache_write_tokens, 0) AS cache_write_tokens,
                 COALESCE(reasoning_tokens, 0) AS reasoning_tokens,
                 COALESCE(actual_cost_usd, estimated_cost_usd, 0) AS cost_usd
             FROM sessions
@@ -600,13 +614,29 @@ def fetch_hourly_model_rollups(
             usage_date,
             model,
             SUM(api_calls) AS api_calls,
-            SUM(input_tokens + output_tokens + cached_tokens + reasoning_tokens) AS total_tokens,
+            SUM(input_tokens) AS input_tokens,
+            SUM(output_tokens) AS output_tokens,
+            SUM(cache_read_tokens) AS cache_read_tokens,
+            SUM(cache_write_tokens) AS cache_write_tokens,
+            SUM(reasoning_tokens) AS reasoning_tokens,
+            SUM(input_tokens + output_tokens + cache_read_tokens + cache_write_tokens + reasoning_tokens) AS total_tokens,
             SUM(cost_usd) AS cost_usd
         FROM scoped_sessions
         GROUP BY usage_date, model
         ORDER BY usage_date ASC, total_tokens DESC, model ASC
     """
     return list(connection.execute(query, (int(window_start.timestamp()), int(window_end.timestamp()))))
+
+
+def _infer_model_provider(model: str) -> str:
+    normalized = model.lower()
+    if normalized.startswith(("gpt-", "o1", "o3", "o4")):
+        return "OpenAI"
+    if normalized.startswith("claude-"):
+        return "Anthropic"
+    if normalized.startswith(("gemini-", "gemma-")):
+        return "Google"
+    return "Unknown"
 
 
 def _normalize_rollup_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:

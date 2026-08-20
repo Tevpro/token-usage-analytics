@@ -1,3 +1,9 @@
+import { summarizePublicPricing } from '#/lib/public-model-pricing'
+import type {
+  PublicPricingLoadResult,
+  PublicPricingSummary,
+} from '#/lib/public-model-pricing'
+
 export type DashboardProjectOption = {
   latestGeneratedAt?: string
   latestRollupDay?: string | null
@@ -40,18 +46,28 @@ export type DashboardIssueByDay = DashboardIssue &
   }
 
 export type DashboardModelSummary = {
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
   cost: number
+  inputTokens?: number
   model: string
+  outputTokens?: number
   provider?: string
+  reasoningTokens?: number
   requests: number
   tokens: number
 }
 
 export type DashboardModelDailyUsage = DashboardProjectOption & {
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
   cost: number
   day: string
+  inputTokens?: number
   model: string
+  outputTokens?: number
   provider: string
+  reasoningTokens?: number
   requests: number
   tokens: number
 }
@@ -70,6 +86,7 @@ type SnapshotBuildInput = {
   issuesByDay?: DashboardIssueByDay[]
   models: DashboardModelSummary[]
   modelRowsByDay?: DashboardModelDailyUsage[]
+  publicPricing?: PublicPricingLoadResult
   rangeLabel?: string
   selectedProjectIds?: string[]
   sourceLabel: string
@@ -118,6 +135,18 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
     color: MODEL_COLORS[index % MODEL_COLORS.length],
     provider: model.provider || 'Unknown',
   }))
+  const publicPricing = input.publicPricing || {
+    availability: 'unavailable' as const,
+    rates: [],
+    sourceUrl: '',
+  }
+  const pricing = summarizePublicPricing(
+    input.models.map((model) => ({
+      ...model,
+      provider: model.provider || 'Unknown',
+    })),
+    publicPricing,
+  )
   const topModel = modelRows.at(0)
   const topDayByTokens = [...aggregatedDailyRows].sort((left, right) => right.totalTokens - left.totalTokens).at(0)
   const topDayByCost = [...aggregatedDailyRows].sort((left, right) => right.cost - left.cost).at(0)
@@ -184,14 +213,20 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         input.modelRowsByDay ||
         input.models.map((model) => ({
           ...EMPTY_PROJECT,
+          cacheReadTokens: model.cacheReadTokens,
+          cacheWriteTokens: model.cacheWriteTokens,
           cost: model.cost,
           day: availableEndDay,
+          inputTokens: model.inputTokens,
           model: model.model,
+          outputTokens: model.outputTokens,
           provider: model.provider || 'Unknown',
+          reasoningTokens: model.reasoningTokens,
           requests: model.requests,
           tokens: model.tokens,
         })),
       selectedProjectIds: resolvedSelectedProjectIds,
+      publicPricing,
     },
     headline: {
       environment: input.environment,
@@ -236,6 +271,7 @@ export function buildSnapshotFromRollups(input: SnapshotBuildInput): DashboardSn
         value: `${(cacheRate * 100).toFixed(1)}%`,
       },
     ],
+    pricing,
     projects: {
       available: availableProjects,
       breakdown: projectBreakdown,
@@ -328,26 +364,36 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       ],
       modelRowsByDay: fallbackDays.flatMap((day, index) => [
         {
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
           cost: 0,
           day,
+          inputTokens: 0,
           model: 'gpt-5.4',
+          outputTokens: 0,
           projectId: 'project:fallback-sample',
           projectName: 'Fallback sample',
           projectProvider: 'Hermes',
           projectSlug: 'fallback-sample',
           provider: 'Hermes',
+          reasoningTokens: 0,
           requests: 18 + index * 2,
           tokens: 74000 + index * 6200,
         },
         {
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
           cost: 0,
           day,
+          inputTokens: 0,
           model: 'claude-sonnet',
+          outputTokens: 0,
           projectId: 'project:fallback-sample',
           projectName: 'Fallback sample',
           projectProvider: 'Hermes',
           projectSlug: 'fallback-sample',
           provider: 'Hermes',
+          reasoningTokens: 0,
           requests: 6 + index,
           tokens: 44000 + index * 5300,
         },
@@ -376,6 +422,16 @@ export function buildFallbackDashboardSnapshot(reason: string): DashboardSnapsho
       { label: 'API Calls', tone: 'neutral', value: '0' },
       { label: 'Cached Input Share', tone: 'warning', value: '0.0%' },
     ],
+    pricing: {
+      availability: 'unavailable',
+      coveredTokens: 0,
+      coverageRatio: 0,
+      label: 'Estimated public API equivalent — current standard rates',
+      projectedCostMicroUsd: null,
+      sourceUrl: '',
+      totalTokens: 0,
+      unpricedModels: [],
+    },
     projects: {
       available: availableProjects,
       breakdown: [
@@ -730,6 +786,7 @@ export type DashboardSnapshot = {
     issuesByDay: DashboardIssueByDay[]
     modelRowsByDay: DashboardModelDailyUsage[]
     selectedProjectIds: string[]
+    publicPricing?: PublicPricingLoadResult
   }
   headline: {
     environment: string
@@ -746,6 +803,7 @@ export type DashboardSnapshot = {
     tone: 'positive' | 'warning' | 'neutral' | 'negative'
     value: string
   }>
+  pricing: PublicPricingSummary
   projects: {
     available: DashboardProjectOption[]
     breakdown: DashboardProjectSummary[]

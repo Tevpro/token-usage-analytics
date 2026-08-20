@@ -32,6 +32,16 @@ their matching D1 window, while `preset=custom&startDay=YYYY-MM-DD&endDay=YYYY-M
 queries that exact date range. `OPENAI_USAGE_DAYS_BACK` controls only the optional
 OpenAI synchronization window; it does not limit dashboard reads.
 
+Projected cost is labeled **Estimated public API equivalent — current standard rates**.
+The dashboard caches exact provider/model matches from LiteLLM's public catalog. Unknown
+or ambiguous model identifiers remain unpriced. Pricing cache, catalog, or migration
+failures are non-fatal: tracked usage still renders with pricing marked unavailable.
+
+Migration `0003_public_api_pricing.sql` must be applied before pricing caching is enabled.
+It also adds separate input, output, cache-read, cache-write, and reasoning dimensions to
+model rollups. Preview deployments must not apply this migration to the production D1
+database; an unmigrated preview degrades to an unavailable pricing state instead.
+
 ## 4. Generate types
 
 ```bash

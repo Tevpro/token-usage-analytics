@@ -45,9 +45,33 @@ export const modelDailyUsage = sqliteTable(
     provider: text('provider').notNull(),
     requests: integer('requests').notNull(),
     tokens: integer('tokens').notNull(),
+    inputTokens: integer('input_tokens').notNull().default(0),
+    outputTokens: integer('output_tokens').notNull().default(0),
+    cacheReadTokens: integer('cache_read_tokens').notNull().default(0),
+    cacheWriteTokens: integer('cache_write_tokens').notNull().default(0),
+    reasoningTokens: integer('reasoning_tokens').notNull().default(0),
     estimatedCostUsd: real('estimated_cost_usd').notNull(),
   },
   (table) => [index('model_daily_usage_rollup_idx').on(table.rollupId)],
+)
+
+export const publicModelPricingCache = sqliteTable(
+  'public_model_pricing_cache',
+  {
+    priceKey: text('price_key').primaryKey(),
+    requestedProvider: text('requested_provider').notNull(),
+    requestedModel: text('requested_model').notNull(),
+    sourceProvider: text('source_provider'),
+    sourceModel: text('source_model'),
+    inputMicroUsdPerMtok: integer('input_micro_usd_per_mtok').notNull().default(0),
+    outputMicroUsdPerMtok: integer('output_micro_usd_per_mtok').notNull().default(0),
+    cacheReadMicroUsdPerMtok: integer('cache_read_micro_usd_per_mtok').notNull().default(0),
+    cacheWriteMicroUsdPerMtok: integer('cache_write_micro_usd_per_mtok').notNull().default(0),
+    resolved: integer('resolved', { mode: 'boolean' }).notNull().default(false),
+    fetchedAt: integer('fetched_at').notNull(),
+    sourceUrl: text('source_url').notNull(),
+  },
+  (table) => [index('public_model_pricing_cache_fetched_at_idx').on(table.fetchedAt)],
 )
 
 export const toolDailyUsage = sqliteTable(

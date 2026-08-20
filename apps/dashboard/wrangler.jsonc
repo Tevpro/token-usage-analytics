@@ -5,7 +5,8 @@
   "compatibility_date": "2025-09-02",
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
-    "APP_ENV": "development"
+    "APP_ENV": "development",
+    "PUBLIC_MODEL_PRICING_REFRESH_HOURS": "12"
   },
   "d1_databases": [
     {
