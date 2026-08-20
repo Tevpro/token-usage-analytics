@@ -1,8 +1,36 @@
-# Hermes token analytics install runbook
+# REQUIRED: Hermes token analytics complete installation checklist
+
+> [!IMPORTANT]
+> **Agents and operators must follow this checklist from start to finish for every production install or upgrade.**
+> Copying the plugin, enabling it, passing `doctor`, and completing one manual sync do **not** constitute a complete installation. The installation is production-ready only after the recurring cron job exists and a cron-triggered run has been verified.
+
+## Agent execution contract
+
+When a user asks to **install**, **set up**, **onboard**, or **upgrade** `hermes-token-analytics`, default to the complete production workflow in this document. Do not reinterpret “install” as “copy files and prove a manual sync.”
+
+You may stop short only when:
+
+- the user explicitly requests a manual-only/non-production install; or
+- a required action is blocked by permissions or process boundaries.
+
+If blocked, complete every independent step that remains possible, then report the exact blocker and command the user must run. Do not describe the installation as complete. A gateway restart blocked from inside the gateway does not make cron creation optional.
+
+## Definition of done
+
+A production installation is complete only when all of these are true:
+
+1. the intended plugin version is copied to the correct plugin root;
+2. the plugin is enabled;
+3. the gateway has reloaded the plugin;
+4. `doctor`, `show-config`, and a manual `sync` succeed;
+5. `token_analytics_sync.sh` exists;
+6. exactly one enabled `token-analytics-sync` cron job exists on the intended profile and cadence;
+7. a cron-triggered run succeeds; and
+8. dashboard freshness or the ingest response confirms the scheduled path reached the destination.
 
 ## TL;DR
 
-Use this when you need to install the Hermes token analytics plugin into a Hermes checkout and make the dashboard stay fresh.
+Use this checklist when you need to install the Hermes token analytics plugin and keep the dashboard fresh without a second round of agent steering.
 
 The key operational rule is simple:
 
@@ -11,7 +39,7 @@ Use the same secret env var name on both sides: `HERMES_TOKEN_ANALYTICS_SHARED_S
 - install and enable the plugin once
 - configure the Worker secret and plugin env vars
 - validate with `doctor`, `show-config`, and one manual `sync`
-- create **one** Hermes cron sync job
+- create and verify **one** Hermes cron sync job
 
 That single sync job handles both concerns:
 
@@ -29,7 +57,7 @@ This repo owns:
 - the Hermes plugin source in `plugins/hermes-token-analytics/`
 - the operator docs in `docs/`
 
-This runbook is written for agents and operators who need a repeatable install path with exact commands.
+This required checklist is written for agents and operators who need a repeatable install path with exact commands and an unambiguous definition of done.
 
 ## Prerequisites
 
@@ -102,6 +130,28 @@ plugins/hermes-token-analytics/
 
 The main operational point is simple: copy the plugin directory, not the monorepo root.
 
+### Verify the installed version before continuing
+
+Set `INSTALLED_PLUGIN_DIR` to the install target you actually chose:
+
+```bash
+# User plugin install (preferred):
+INSTALLED_PLUGIN_DIR="${HERMES_HOME:-$HOME/.hermes}/plugins/hermes-token-analytics"
+
+# Bundled checkout install instead:
+# INSTALLED_PLUGIN_DIR="${HERMES_HOME:-$HOME/.hermes}/hermes-agent/plugins/hermes-token-analytics"
+```
+
+Then read the source and installed manifests and confirm they match:
+
+```bash
+python3 -c 'import pathlib, sys; [print(f"{p}: " + next(line for line in pathlib.Path(p).read_text().splitlines() if line.startswith("version:"))) for p in sys.argv[1:]]' \
+  plugins/hermes-token-analytics/plugin.yaml \
+  "$INSTALLED_PLUGIN_DIR/plugin.yaml"
+```
+
+If you supplied a non-default target to the install helper, set `INSTALLED_PLUGIN_DIR` to that exact resulting plugin directory. Do not continue with an older installed version. Report both versions in the completion summary so fleet operators can distinguish “enabled” from “up to date.”
+
 ## Step 2. Enable the plugin in Hermes
 
 Enable the plugin by its path-derived key:
@@ -115,6 +165,8 @@ Then restart the gateway so Hermes reloads the plugin command surface:
 ```bash
 hermes gateway restart
 ```
+
+If Hermes refuses to restart itself from inside the running gateway process, record this as an external-shell blocker and give the user the exact command above. **Continue with configuration, wrapper creation, cron reconciliation, and scheduled-path validation wherever the already-loaded command surface allows it.** Do not use the restart boundary as a reason to omit scheduling.
 
 Then verify Hermes sees it:
 
@@ -204,15 +256,25 @@ Continuous reporting requires a cron job.
 
 If `sync` fails, stop here and fix config before adding cron.
 
-## Step 5. Create the scheduled job
+## Step 5. Create or reconcile the scheduled job
 
-Install the cron wrapper once:
+First inspect the active profile before creating anything:
 
 ```bash
-hermes token-analytics install-cron-wrapper
+hermes cron list --all
 ```
 
-Then create the recurring sync job:
+Install the cron wrapper once, or refresh it during an upgrade before creating or repairing the job:
+
+```bash
+hermes token-analytics install-cron-wrapper --force
+```
+
+Apply exactly one of these cases:
+
+### Case A: no `token-analytics-sync` job exists
+
+Create it:
 
 ```bash
 hermes cron create "every 15m" \
@@ -220,6 +282,31 @@ hermes cron create "every 15m" \
   --script token_analytics_sync.sh \
   --no-agent
 ```
+
+### Case B: exactly one job exists
+
+If its cadence, script, name, or no-agent mode differs, repair that same job instead of creating another:
+
+```bash
+hermes cron edit <job_id> \
+  --schedule "every 15m" \
+  --name "token-analytics-sync" \
+  --script token_analytics_sync.sh \
+  --no-agent
+hermes cron resume <job_id>
+```
+
+If it is already correct and enabled, reuse it unchanged.
+
+### Case C: duplicate jobs exist
+
+Choose one canonical job, repair it with the Case B command, then remove every duplicate by its real ID:
+
+```bash
+hermes cron remove <duplicate_job_id>
+```
+
+Run `hermes cron list --all` again and do not continue until exactly one enabled `token-analytics-sync` job remains and it points to `token_analytics_sync.sh`.
 
 Why this is the right job model:
 
@@ -256,22 +343,53 @@ hermes cron run <job_id>
 
 Confirm:
 
-- the job is enabled
-- the schedule is correct
-- the cron-triggered run behaves the same as the manual `sync`
+- the job is enabled;
+- the schedule and active profile are correct;
+- the job points to the expected wrapper;
+- the cron-triggered run completes successfully;
+- the run reports a successful ingest response; and
+- dashboard freshness advances after the scheduled-path run.
+
+Do not use the earlier manual sync as evidence for this step. Record the cron job ID and the scheduled-path result in the completion summary.
 
 ## Production readiness checklist
 
+- [ ] source and installed plugin versions match
 - [ ] plugin copied from `plugins/hermes-token-analytics/` into the intended install target
 - [ ] plugin enabled
-- [ ] gateway restarted
+- [ ] gateway restarted and plugin reload verified
 - [ ] `hermes token-analytics doctor` passes
 - [ ] `hermes token-analytics show-config` is correct
 - [ ] `hermes token-analytics sync` succeeds
-- [ ] `hermes token-analytics install-cron-wrapper` run
-- [ ] cron job created
-- [ ] `hermes cron list --all` shows `token-analytics-sync`
-- [ ] one cron-triggered run verified
+- [ ] `hermes token-analytics install-cron-wrapper --force` run
+- [ ] exactly one enabled `token-analytics-sync` cron job exists
+- [ ] `hermes cron list --all` shows the intended profile, wrapper, and cadence
+- [ ] one cron-triggered run succeeds
+- [ ] dashboard or ingest freshness advances from the cron-triggered run
+
+If any box remains unchecked, report the result as **partial/incomplete**, not “installed successfully.”
+
+## Required completion report
+
+End every installation or upgrade task with this evidence block:
+
+```text
+Installation status: COMPLETE | PARTIAL/BLOCKED
+Source plugin version: <version>
+Installed plugin version: <version>
+Install target: <absolute path>
+Plugin enabled: yes/no
+Gateway reload: completed | blocked — <exact command/action>
+Doctor: pass/fail
+Manual sync: pass/fail — rowsWritten=<n>, syncedAt=<timestamp>
+Cron wrapper: <absolute path> | missing
+Cron job: <job_id> | missing — enabled=<yes/no>, schedule=<value>, profile=<name>
+Cron-triggered run: pass/fail/not run — <result>
+Scheduled freshness verified: yes/no — <timestamp or ingest evidence>
+Remaining blockers: none | <explicit list>
+```
+
+Do not bury missing scheduling in prose after announcing success. The first line must say `PARTIAL/BLOCKED` whenever the wrapper, cron job, scheduled run, or required gateway reload remains incomplete.
 
 ## Normal operating procedure
 
@@ -317,24 +435,31 @@ Check, in order:
 4. `hermes cron list --all`
 5. whether someone created duplicate or conflicting jobs
 
-## Quick command block
+## Fast path without duplicate-job risk
 
-If you just want the minimal procedure:
+Run the common steps first:
 
 ```bash
 # from this repo root
 plugins/hermes-token-analytics/scripts/install-local-plugin.sh
 hermes plugins enable hermes-token-analytics
+hermes gateway restart
 
-# configure env for the right Hermes profile, then validate
+# configure env for the right Hermes profile, then validate manually
 hermes token-analytics doctor
 hermes token-analytics show-config
 hermes token-analytics sync
 
-# install one recurring sync job that covers both rollups and heartbeat
-hermes token-analytics install-cron-wrapper
-hermes cron create "every 15m" \
-  --name "token-analytics-sync" \
-  --script token_analytics_sync.sh \
-  --no-agent
+# refresh the wrapper and inspect scheduler state before mutating jobs
+hermes token-analytics install-cron-wrapper --force
+hermes cron list --all
 ```
+
+Then apply **exactly one** Step 5 case based on that list: create when absent, edit/resume when one job is wrong or paused, or repair one and remove duplicates. Finally:
+
+```bash
+hermes cron list --all
+hermes cron run <canonical_job_id>
+```
+
+Do not turn this into an unconditional `cron create`; upgrades must preserve and repair the existing canonical job rather than duplicate it.

@@ -1,3 +1,13 @@
+# Repository agent instructions
+
+## Hermes token analytics installation and upgrades
+
+When a task asks you to install, set up, onboard, validate, repair, or upgrade `hermes-token-analytics`, you **must read and follow**:
+
+- [`plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`](plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md)
+
+Do not declare a production installation complete after copying/enabling the plugin or after one successful manual sync. Unless the user explicitly requests a manual-only install, completion requires the wrapper, exactly one enabled recurring cron job, and a verified cron-triggered run. If a gateway restart is blocked from inside the gateway process, complete every independent scheduling step and report the restart as a remaining blocker.
+
 <!-- intent-skills:start -->
 # Skill mappings - load `use` with `npx @tanstack/intent@latest load <use>`.
 skills:

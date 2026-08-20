@@ -1,3 +1,8 @@
+# Token usage analytics
+
+> [!IMPORTANT]
+> **Installing or upgrading the Hermes plugin?** Agents and operators must follow [`plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`](plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md) from start to finish. A manual sync is not a production-ready install; the recurring cron path must also be created and verified.
+
 ## TL;DR
 
 This repo is now a small monorepo:
@@ -8,10 +13,10 @@ This repo is now a small monorepo:
 
 The goal is simple: keep the dashboard, ingest contract, plugin source, and operational docs in one place instead of splitting the truth across repos.
 
-For Hermes ingestion operations, the canonical operator guides are:
+For Hermes ingestion operations:
 
-- `docs/hermes-token-analytics-plugin.md`
-- `docs/hermes-token-analytics-install-runbook.md`
+- **Required install/upgrade procedure:** `plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`
+- Background operations reference: `docs/hermes-token-analytics-plugin.md`
 
 ## What is in here
 
@@ -25,7 +30,7 @@ For Hermes ingestion operations, the canonical operator guides are:
   - `docs/ai-build-prompts.md`
   - `docs/cloudflare-deployment.md`
   - `docs/hermes-token-analytics-plugin.md`
-  - `docs/hermes-token-analytics-install-runbook.md`
+  - `plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`
   - `docs/hermes-sidecar-sync.md` (migration pointer to the plugin doc)
 
 ## Product direction
@@ -78,7 +83,7 @@ Supporting files:
 - install helper: `plugins/hermes-token-analytics/scripts/install-local-plugin.sh`
 - tests: `plugins/hermes-token-analytics/tests/`
 - operator guide: `docs/hermes-token-analytics-plugin.md`
-- install runbook: `docs/hermes-token-analytics-install-runbook.md`
+- required installation checklist: `plugins/hermes-token-analytics/REQUIRED_INSTALLATION_CHECKLIST.md`
 - install helper also writes a legacy shim for `plugins/observability/token_analytics` in target Hermes checkouts
 
 ## CI / deploy model

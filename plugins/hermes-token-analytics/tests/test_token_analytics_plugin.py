@@ -334,6 +334,19 @@ def test_install_cron_wrapper_writes_executable_script(tmp_path):
     assert wrapper.stat().st_mode & 0o111
 
 
+def test_install_cron_wrapper_command_does_not_recommend_duplicate_job_creation(tmp_path, capsys):
+    result = _cli._cmd_install_cron_wrapper(
+        tmp_path / "token_analytics_sync.sh",
+        force=False,
+    )
+    output = capsys.readouterr().out
+
+    assert result == 0
+    assert "hermes cron list --all" in output
+    assert "REQUIRED_INSTALLATION_CHECKLIST.md" in output
+    assert "hermes cron create" not in output
+
+
 def test_post_payload_sends_cloudflare_friendly_headers(tmp_path, monkeypatch):
     db_path = tmp_path / "state.db"
     _make_db(db_path)
@@ -707,3 +720,20 @@ def test_repository_rollups_cache_git_resolution_per_unique_path_before_bucket_e
     assert len([item for item in rollups if item["usageDate"] == "2025-11-19T03:00:00Z"]) == 2
     assert [path for path, _ in calls].count(repository) == 3
     assert [path for path, _ in calls].count(unattributed) == 1
+
+
+def test_install_helper_carries_and_announces_required_production_checklist():
+    plugin_dir = Path(__file__).resolve().parents[1]
+    script = (plugin_dir / "scripts" / "install-local-plugin.sh").read_text()
+    checklist = (plugin_dir / "REQUIRED_INSTALLATION_CHECKLIST.md").read_text()
+    agent_instructions = (plugin_dir / "AGENTS.md").read_text()
+
+    assert 'REQUIRED_INSTALLATION_CHECKLIST.md' in script
+    assert 'AGENTS.md' in script
+    assert 'INSTALLATION IS NOT COMPLETE' in script
+    assert 'token-analytics-sync' in script
+    assert 'cron-triggered run' in script
+    assert 'hermes cron edit <job_id>' in checklist
+    assert 'hermes cron remove <duplicate_job_id>' in checklist
+    assert 'Installation status: COMPLETE | PARTIAL/BLOCKED' in checklist
+    assert 'REQUIRED_INSTALLATION_CHECKLIST.md' in agent_instructions

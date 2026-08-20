@@ -1,5 +1,8 @@
 # Hermes token analytics plugin source
 
+> [!IMPORTANT]
+> **Required for every production install or upgrade:** follow [`REQUIRED_INSTALLATION_CHECKLIST.md`](REQUIRED_INSTALLATION_CHECKLIST.md) through scheduled-path verification. Copying/enabling this directory and completing one manual sync is not a complete production installation.
+
 This directory is the source-of-truth copy of the Hermes token analytics plugin inside the monorepo.
 
 > [!WARNING]
@@ -12,7 +15,7 @@ This directory is the source-of-truth copy of the Hermes token analytics plugin 
 - `plugins/hermes-token-analytics/` — the plugin files as they should exist inside a Hermes checkout
 - `plugins/hermes-token-analytics/tests/` — plugin validation tests
 - `plugins/hermes-token-analytics/scripts/install-local-plugin.sh` — helper to copy the plugin into a local Hermes repo checkout
-- `docs/hermes-token-analytics-install-runbook.md` — exact operator procedure for install, validation, and cron setup
+- `REQUIRED_INSTALLATION_CHECKLIST.md` — exact operator procedure for install, validation, and cron setup
 
 ## Why this exists
 
@@ -71,4 +74,4 @@ hermes plugins enable hermes-token-analytics
 hermes gateway restart
 ```
 
-A successful manual `hermes token-analytics sync` proves the plugin works manually. It does **not** prove continuous reporting is active. For that, create the cron job described in `docs/hermes-token-analytics-install-runbook.md`.
+A successful manual `hermes token-analytics sync` proves the plugin works manually. It does **not** prove continuous reporting is active. For that, create the cron job described in `REQUIRED_INSTALLATION_CHECKLIST.md`.

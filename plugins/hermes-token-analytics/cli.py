@@ -252,9 +252,12 @@ def _cmd_install_cron_wrapper(path: Path, *, force: bool) -> int:
             {
                 "ok": True,
                 "path": str(created),
-                "usage": (
-                    "hermes cron create 'every 15m' --name 'token-analytics-sync' "
-                    f"--script {created.name} --no-agent"
+                "next": "hermes cron list --all",
+                "required_checklist": "REQUIRED_INSTALLATION_CHECKLIST.md",
+                "note": (
+                    "Inspect existing jobs before creating or editing anything; "
+                    "reconcile to exactly one enabled token-analytics-sync job, "
+                    "then verify a cron-triggered run."
                 ),
             },
             indent=2,

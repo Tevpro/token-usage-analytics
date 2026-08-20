@@ -12,6 +12,11 @@ if [[ ! -f "$SOURCE_ROOT/plugin.yaml" || ! -f "$SOURCE_ROOT/__init__.py" ]]; the
   exit 1
 fi
 
+if [[ ! -f "$SOURCE_ROOT/REQUIRED_INSTALLATION_CHECKLIST.md" || ! -f "$SOURCE_ROOT/AGENTS.md" ]]; then
+  echo "source plugin is missing mandatory agent installation guidance: $SOURCE_ROOT" >&2
+  exit 1
+fi
+
 mkdir -p "$TARGET_HERMES_ROOT/plugins" "$(dirname "$LEGACY_PLUGIN_DIR")"
 rm -rf "$TARGET_PLUGIN_DIR" "$LEGACY_PLUGIN_DIR"
 mkdir -p "$LEGACY_PLUGIN_DIR"
@@ -53,3 +58,8 @@ YAML
 
 echo "Installed hermes-token-analytics plugin into: $TARGET_PLUGIN_DIR"
 echo "Installed compatibility shim into: $LEGACY_PLUGIN_DIR"
+echo
+echo "INSTALLATION IS NOT COMPLETE"
+echo "Follow: $TARGET_PLUGIN_DIR/REQUIRED_INSTALLATION_CHECKLIST.md"
+echo "Production readiness still requires plugin enablement/reload, manual validation,"
+echo "exactly one enabled token-analytics-sync cron job, and a verified cron-triggered run."
