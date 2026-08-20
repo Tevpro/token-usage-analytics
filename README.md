@@ -3,7 +3,7 @@
 This repo is now a small monorepo:
 
 - `apps/dashboard/` — the Cloudflare Workers + D1 analytics app
-- `plugins/hermes-token-analytics/` — the Hermes-native plugin source that exports `state.db` rollups into the dashboard ingest endpoint
+- `plugins/hermes-token-analytics/` — the Hermes-native plugin source that exports `state.db` rollups, including privacy-safe repository attribution, into the dashboard ingest endpoint
 - `docs/` — shared operator and deployment documentation
 
 The goal is simple: keep the dashboard, ingest contract, plugin source, and operational docs in one place instead of splitting the truth across repos.
@@ -68,7 +68,6 @@ nub run deploy
 If a fresh worktree has no local D1 data yet, run `nub run cf:d1:bootstrap:local` before `nub run dev`. It applies local migrations, wipes/reseeds the demo workspaces, and inserts recent daily plus hourly sample data so the dashboard renders immediately.
 
 ## Hermes plugin source
-
 
 The Hermes plugin source lives at:
 

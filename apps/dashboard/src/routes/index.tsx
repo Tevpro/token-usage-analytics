@@ -38,8 +38,17 @@ import {
   aggregateSingleMetricChartPoints,
   aggregateTrafficChartPoints,
 } from '#/lib/chart-presentation'
-import { getAgentDataStatus, getAggregateAgentDataStatus } from '#/lib/dashboard-agent-status'
+import {
+  getAgentDataStatus,
+  getAggregateAgentDataStatus,
+} from '#/lib/dashboard-agent-status'
 import { filterSnapshotByProjects } from '#/lib/dashboard-projects'
+import { filterSnapshotByRepositories } from '#/lib/dashboard-repositories'
+import {
+  parseRepositorySelection,
+  resolveRepositorySelection,
+  serializeRepositorySelection,
+} from '#/lib/dashboard-repository-selection'
 import { DASHBOARD_TIME_ZONE } from '#/lib/dashboard-time-zone'
 import {
   filterSnapshotByTimeframe,
@@ -77,7 +86,10 @@ function Home() {
   const search = Route.useSearch()
   const navigate = useNavigate({ from: Route.fullPath })
   const isNarrowViewport = useIsMobileBreakpoint()
-  const defaultTimeframe = useMemo(() => getInitialTimeframeSelection(snapshot), [snapshot])
+  const defaultTimeframe = useMemo(
+    () => getInitialTimeframeSelection(snapshot),
+    [snapshot],
+  )
   const availableProjectIds = useMemo(
     () => snapshot.projects.available.map((project) => project.projectId),
     [snapshot.projects.available],
@@ -92,23 +104,70 @@ function Home() {
     () => getSearchBackedTimeframe(search, defaultTimeframe),
     [defaultTimeframe, search],
   )
+  const projectSnapshot = useMemo(
+    () => filterSnapshotByProjects(snapshot, selectedProjectIds),
+    [selectedProjectIds, snapshot],
+  )
+  const timeframeSnapshot = useMemo(
+    () => filterSnapshotByTimeframe(projectSnapshot, timeframe),
+    [projectSnapshot, timeframe],
+  )
+  const availableRepositoryIds = useMemo(
+    () =>
+      timeframeSnapshot.repositories.available.map(
+        (repository) => repository.repositoryId,
+      ),
+    [timeframeSnapshot.repositories.available],
+  )
+  const repositorySelection = useMemo(
+    () =>
+      resolveRepositorySelection(search.repositories, availableRepositoryIds),
+    [availableRepositoryIds, search.repositories],
+  )
+  const selectedRepositoryIds = repositorySelection.selectedRepositoryIds
   const updateSearch = (next: Partial<DashboardSearch>) =>
     navigate({
       replace: true,
-      search: (current: DashboardSearch) => sanitizeDashboardSearch({ ...current, ...next }, defaultTimeframe, availableProjectIds),
+      search: (current: DashboardSearch) =>
+        sanitizeDashboardSearch(
+          { ...current, ...next },
+          defaultTimeframe,
+          availableProjectIds,
+          availableRepositoryIds,
+        ),
     })
-  const projectSnapshot = useMemo(() => filterSnapshotByProjects(snapshot, selectedProjectIds), [selectedProjectIds, snapshot])
-  const activeSnapshot = useMemo(() => filterSnapshotByTimeframe(projectSnapshot, timeframe), [projectSnapshot, timeframe])
+  useEffect(() => {
+    if (repositorySelection.shouldClear) {
+      updateSearch({ repositories: undefined })
+    }
+  }, [repositorySelection.shouldClear, search.repositories])
+  const activeSnapshot = useMemo(
+    () =>
+      filterSnapshotByRepositories(timeframeSnapshot, selectedRepositoryIds),
+    [selectedRepositoryIds, timeframeSnapshot],
+  )
   const selectedProjects = useMemo(() => {
-    if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjectIds.length) {
+    if (
+      selectedProjectIds.length === 0 ||
+      selectedProjectIds.length === availableProjectIds.length
+    ) {
       return snapshot.projects.available
     }
 
     const selectedSet = new Set(selectedProjectIds)
-    return snapshot.projects.available.filter((project) => selectedSet.has(project.projectId))
-  }, [availableProjectIds.length, selectedProjectIds, snapshot.projects.available])
+    return snapshot.projects.available.filter((project) =>
+      selectedSet.has(project.projectId),
+    )
+  }, [
+    availableProjectIds.length,
+    selectedProjectIds,
+    snapshot.projects.available,
+  ])
   const newestFirstRollups: typeof activeSnapshot.table = useMemo(
-    () => [...activeSnapshot.table].sort((left, right) => right.day.localeCompare(left.day)),
+    () =>
+      [...activeSnapshot.table].sort((left, right) =>
+        right.day.localeCompare(left.day),
+      ),
     [activeSnapshot.table],
   )
   const agentDataStatus = useMemo(
@@ -128,8 +187,9 @@ function Home() {
   const useAggregatedTrafficBars =
     activeSnapshot.headline.granularity === 'hour' &&
     activeSnapshot.charts.requestsCostCache.length > 12
-  const effectiveTrafficChartMode =
-    showTrafficChartModeToggle ? trafficChartMode : 'bars'
+  const effectiveTrafficChartMode = showTrafficChartModeToggle
+    ? trafficChartMode
+    : 'bars'
   const trafficBarData = useMemo(
     () =>
       useAggregatedTrafficBars
@@ -148,12 +208,16 @@ function Home() {
     () => activeSnapshot.charts.requestsCostCache,
     [activeSnapshot.charts.requestsCostCache],
   )
-  const mobileBucketCount = activeSnapshot.headline.granularity === 'hour' ? 8 : 7
+  const mobileBucketCount =
+    activeSnapshot.headline.granularity === 'hour' ? 8 : 7
   const defaultBarMaxLabels = isNarrowViewport ? 4 : 6
   const compactInputOutputData = useMemo(
     () =>
       isNarrowViewport
-        ? aggregateDualMetricChartPoints(activeSnapshot.charts.inputOutput, mobileBucketCount)
+        ? aggregateDualMetricChartPoints(
+            activeSnapshot.charts.inputOutput,
+            mobileBucketCount,
+          )
         : activeSnapshot.charts.inputOutput,
     [activeSnapshot.charts.inputOutput, isNarrowViewport, mobileBucketCount],
   )
@@ -179,30 +243,50 @@ function Home() {
     () =>
       isNarrowViewport
         ? aggregateSingleMetricChartPoints(
-            activeSnapshot.charts.costByDay.map((item) => ({ day: item.day, value: item.cost })),
+            activeSnapshot.charts.costByDay.map((item) => ({
+              day: item.day,
+              value: item.cost,
+            })),
             mobileBucketCount,
           ).map((item) => ({ day: item.day, cost: item.value }))
         : activeSnapshot.charts.costByDay,
     [activeSnapshot.charts.costByDay, isNarrowViewport, mobileBucketCount],
   )
   const rotateDenseTickLabels =
-    Math.max(trafficBarData.length, compactTokenVolumeData.length, compactCostByDayData.length) > defaultBarMaxLabels
-  const trafficMaxLabels = rotateDenseTickLabels ? trafficBarData.length : defaultBarMaxLabels
-  const tokenMaxLabels = rotateDenseTickLabels ? compactTokenVolumeData.length : defaultBarMaxLabels
-  const costMaxLabels = rotateDenseTickLabels ? compactCostByDayData.length : defaultBarMaxLabels
+    Math.max(
+      trafficBarData.length,
+      compactTokenVolumeData.length,
+      compactCostByDayData.length,
+    ) > defaultBarMaxLabels
+  const trafficMaxLabels = rotateDenseTickLabels
+    ? trafficBarData.length
+    : defaultBarMaxLabels
+  const tokenMaxLabels = rotateDenseTickLabels
+    ? compactTokenVolumeData.length
+    : defaultBarMaxLabels
+  const costMaxLabels = rotateDenseTickLabels
+    ? compactCostByDayData.length
+    : defaultBarMaxLabels
   const trafficSummaryItems = useMemo(
     () => [
       {
         accent: 'var(--chart-grey)',
         key: 'traffic-requests',
         label: 'Requests',
-        value: activeSnapshot.charts.requestsCostCache.reduce((sum, item) => sum + item.primary, 0).toLocaleString('en-US'),
+        value: activeSnapshot.charts.requestsCostCache
+          .reduce((sum, item) => sum + item.primary, 0)
+          .toLocaleString('en-US'),
       },
       {
         accent: 'var(--chart-red)',
         key: 'traffic-cost',
         label: 'Allocated cost',
-        value: formatCurrency(activeSnapshot.charts.requestsCostCache.reduce((sum, item) => sum + item.secondary, 0) / 10),
+        value: formatCurrency(
+          activeSnapshot.charts.requestsCostCache.reduce(
+            (sum, item) => sum + item.secondary,
+            0,
+          ) / 10,
+        ),
       },
       {
         accent: 'var(--chart-violet)',
@@ -219,13 +303,23 @@ function Home() {
         accent: 'var(--chart-violet)',
         key: 'input-total',
         label: 'Input tokens',
-        value: formatCompact(activeSnapshot.charts.inputOutput.reduce((sum, item) => sum + item.primary, 0)),
+        value: formatCompact(
+          activeSnapshot.charts.inputOutput.reduce(
+            (sum, item) => sum + item.primary,
+            0,
+          ),
+        ),
       },
       {
         accent: 'var(--chart-ink)',
         key: 'output-total',
         label: 'Output tokens',
-        value: formatCompact(activeSnapshot.charts.inputOutput.reduce((sum, item) => sum + item.secondary, 0)),
+        value: formatCompact(
+          activeSnapshot.charts.inputOutput.reduce(
+            (sum, item) => sum + item.secondary,
+            0,
+          ),
+        ),
       },
     ],
     [activeSnapshot.charts.inputOutput],
@@ -236,13 +330,23 @@ function Home() {
         accent: 'var(--chart-magenta)',
         key: 'cost-total',
         label: 'Total cost',
-        value: formatCurrency(activeSnapshot.charts.costByDay.reduce((sum, item) => sum + item.cost, 0)),
+        value: formatCurrency(
+          activeSnapshot.charts.costByDay.reduce(
+            (sum, item) => sum + item.cost,
+            0,
+          ),
+        ),
       },
       {
         accent: 'var(--chart-magenta)',
         key: 'cost-peak',
         label: 'Peak bucket',
-        value: formatCurrency(Math.max(...activeSnapshot.charts.costByDay.map((item) => item.cost), 0)),
+        value: formatCurrency(
+          Math.max(
+            ...activeSnapshot.charts.costByDay.map((item) => item.cost),
+            0,
+          ),
+        ),
       },
     ],
     [activeSnapshot.charts.costByDay],
@@ -304,7 +408,9 @@ function Home() {
 
           <Tabs
             className="w-full"
-            onValueChange={(value) => updateSearch({ tab: value as DashboardTab })}
+            onValueChange={(value) =>
+              updateSearch({ tab: value as DashboardTab })
+            }
             value={activeTab}
           >
             <TabsList className="dashboard-tabs-list">
@@ -326,8 +432,30 @@ function Home() {
         <div className="toolbar-chip-group">
           <ProjectFilterChip
             availableProjects={snapshot.projects.available}
-            onChange={(projectIds) => updateSearch({ projects: serializeSelectedProjectIds(projectIds, availableProjectIds) })}
+            onChange={(projectIds) =>
+              updateSearch({
+                projects: serializeSelectedProjectIds(
+                  projectIds,
+                  availableProjectIds,
+                ),
+              })
+            }
             selectedProjectIds={selectedProjectIds}
+          />
+          <RepositoryFilterChip
+            availableRepositories={timeframeSnapshot.repositories.available}
+            attributionCoverage={
+              timeframeSnapshot.repositories.attributionCoverage
+            }
+            onChange={(repositoryIds) =>
+              updateSearch({
+                repositories: serializeRepositorySelection(
+                  repositoryIds,
+                  availableRepositoryIds,
+                ),
+              })
+            }
+            selectedRepositoryIds={selectedRepositoryIds}
           />
           <div className="toolbar-chip gap-3">
             <CalendarRange className="size-4" />
@@ -335,15 +463,20 @@ function Home() {
               onValueChange={(value) => {
                 const preset = value as TimeframePreset
                 const nextTimeframe = {
-                  endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
+                  endDay:
+                    timeframe.endDay || projectSnapshot.filters.availableEndDay,
                   preset,
-                  startDay: timeframe.startDay || projectSnapshot.filters.availableStartDay,
+                  startDay:
+                    timeframe.startDay ||
+                    projectSnapshot.filters.availableStartDay,
                 }
 
                 updateSearch({
-                  endDay: preset === 'custom' ? nextTimeframe.endDay : undefined,
+                  endDay:
+                    preset === 'custom' ? nextTimeframe.endDay : undefined,
                   preset,
-                  startDay: preset === 'custom' ? nextTimeframe.startDay : undefined,
+                  startDay:
+                    preset === 'custom' ? nextTimeframe.startDay : undefined,
                 })
               }}
               value={timeframe.preset}
@@ -369,7 +502,9 @@ function Home() {
                 className="h-8 w-[132px] border-0 bg-transparent px-0 text-sm shadow-none focus-visible:ring-0"
                 onChange={(event) =>
                   updateSearch({
-                    endDay: timeframe.endDay || projectSnapshot.filters.availableEndDay,
+                    endDay:
+                      timeframe.endDay ||
+                      projectSnapshot.filters.availableEndDay,
                     preset: 'custom',
                     startDay: event.target.value,
                   })
@@ -392,7 +527,9 @@ function Home() {
                   updateSearch({
                     endDay: event.target.value,
                     preset: 'custom',
-                    startDay: timeframe.startDay || projectSnapshot.filters.availableStartDay,
+                    startDay:
+                      timeframe.startDay ||
+                      projectSnapshot.filters.availableStartDay,
                   })
                 }
                 type="date"
@@ -516,7 +653,9 @@ function Home() {
                       size="xs"
                       type="button"
                       variant={
-                        effectiveTrafficChartMode === 'bars' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'bars'
+                          ? 'secondary'
+                          : 'ghost'
                       }
                     >
                       {useAggregatedTrafficBars ? '12 bars' : 'Bars'}
@@ -528,7 +667,9 @@ function Home() {
                       size="xs"
                       type="button"
                       variant={
-                        effectiveTrafficChartMode === 'line' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'line'
+                          ? 'secondary'
+                          : 'ghost'
                       }
                     >
                       Line
@@ -536,7 +677,11 @@ function Home() {
                   </div>
                 ) : null
               }
-              footer={isNarrowViewport ? <LegendStats items={trafficSummaryItems} /> : undefined}
+              footer={
+                isNarrowViewport ? (
+                  <LegendStats items={trafficSummaryItems} />
+                ) : undefined
+              }
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -545,7 +690,10 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {effectiveTrafficChartMode === 'line' ? (
-                <TrafficTrendChart data={trafficLineData} title="Requests, cost, and cache trends" />
+                <TrafficTrendChart
+                  data={trafficLineData}
+                  title="Requests, cost, and cache trends"
+                />
               ) : (
                 <TrafficBars
                   compactLabels={isNarrowViewport}
@@ -557,14 +705,21 @@ function Home() {
             </ChartCard>
 
             <ChartCard
-              footer={isNarrowViewport ? <LegendStats items={inputOutputSummaryItems} /> : undefined}
+              footer={
+                isNarrowViewport ? (
+                  <LegendStats items={inputOutputSummaryItems} />
+                ) : undefined
+              }
               legend={[
                 { label: 'Input tokens', color: 'var(--chart-violet)' },
                 { label: 'Output tokens', color: 'var(--chart-ink)' },
               ]}
               title="Input vs output"
             >
-              <LineChart data={compactInputOutputData} title="Input and output tokens" />
+              <LineChart
+                data={compactInputOutputData}
+                title="Input and output tokens"
+              />
             </ChartCard>
 
             <Card className="panel-card panel-card-signals">
@@ -658,39 +813,41 @@ function Home() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {newestFirstRollups.map((row: (typeof newestFirstRollups)[number]) => (
-                      <TableRow key={row.traceId}>
-                        <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
-                          {row.traceId}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col gap-1">
-                            <span>{formatBucketLabel(row.day)}</span>
-                            <span className="text-xs text-slate-500 sm:hidden">
-                              {row.traceId}
-                            </span>
-                          </div>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {row.requests.toLocaleString('en-US')}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {formatCompact(row.totalTokens)}
-                        </TableCell>
-                        <TableCell className="hidden text-right lg:table-cell">
-                          {formatCompact(row.inputTokens)}
-                        </TableCell>
-                        <TableCell className="hidden text-right lg:table-cell">
-                          {formatCompact(row.outputTokens)}
-                        </TableCell>
-                        <TableCell className="hidden text-right md:table-cell">
-                          {(row.cachedShare * 100).toFixed(1)}%
-                        </TableCell>
-                        <TableCell className="text-right">
-                          ${row.cost.toFixed(2)}
-                        </TableCell>
-                      </TableRow>
-                    ))}
+                    {newestFirstRollups.map(
+                      (row: (typeof newestFirstRollups)[number]) => (
+                        <TableRow key={row.traceId}>
+                          <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
+                            {row.traceId}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex flex-col gap-1">
+                              <span>{formatBucketLabel(row.day)}</span>
+                              <span className="text-xs text-slate-500 sm:hidden">
+                                {row.traceId}
+                              </span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {row.requests.toLocaleString('en-US')}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {formatCompact(row.totalTokens)}
+                          </TableCell>
+                          <TableCell className="hidden text-right lg:table-cell">
+                            {formatCompact(row.inputTokens)}
+                          </TableCell>
+                          <TableCell className="hidden text-right lg:table-cell">
+                            {formatCompact(row.outputTokens)}
+                          </TableCell>
+                          <TableCell className="hidden text-right md:table-cell">
+                            {(row.cachedShare * 100).toFixed(1)}%
+                          </TableCell>
+                          <TableCell className="text-right">
+                            ${row.cost.toFixed(2)}
+                          </TableCell>
+                        </TableRow>
+                      ),
+                    )}
                   </TableBody>
                 </Table>
               </CardContent>
@@ -786,7 +943,9 @@ function Home() {
                       size="xs"
                       type="button"
                       variant={
-                        effectiveTrafficChartMode === 'bars' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'bars'
+                          ? 'secondary'
+                          : 'ghost'
                       }
                     >
                       {useAggregatedTrafficBars ? '12 bars' : 'Bars'}
@@ -798,7 +957,9 @@ function Home() {
                       size="xs"
                       type="button"
                       variant={
-                        effectiveTrafficChartMode === 'line' ? 'secondary' : 'ghost'
+                        effectiveTrafficChartMode === 'line'
+                          ? 'secondary'
+                          : 'ghost'
                       }
                     >
                       Line
@@ -806,7 +967,11 @@ function Home() {
                   </div>
                 ) : null
               }
-              footer={isNarrowViewport ? <LegendStats items={trafficSummaryItems} /> : undefined}
+              footer={
+                isNarrowViewport ? (
+                  <LegendStats items={trafficSummaryItems} />
+                ) : undefined
+              }
               legend={[
                 { label: 'Requests', color: 'var(--chart-grey)' },
                 { label: 'Cost ×10', color: 'var(--chart-red)' },
@@ -815,7 +980,10 @@ function Home() {
               title="Requests / Cost / Cache"
             >
               {effectiveTrafficChartMode === 'line' ? (
-                <TrafficTrendChart data={trafficLineData} title="Requests, cost, and cache trends" />
+                <TrafficTrendChart
+                  data={trafficLineData}
+                  title="Requests, cost, and cache trends"
+                />
               ) : (
                 <TrafficBars
                   compactLabels={isNarrowViewport}
@@ -827,17 +995,31 @@ function Home() {
             </ChartCard>
 
             <ChartCard
-              footer={isNarrowViewport ? <LegendStats items={inputOutputSummaryItems} /> : undefined}
+              footer={
+                isNarrowViewport ? (
+                  <LegendStats items={inputOutputSummaryItems} />
+                ) : undefined
+              }
               legend={[
                 { label: 'Input tokens', color: 'var(--chart-violet)' },
                 { label: 'Output tokens', color: 'var(--chart-ink)' },
               ]}
               title="Input vs output"
             >
-              <LineChart data={compactInputOutputData} title="Input and output tokens" />
+              <LineChart
+                data={compactInputOutputData}
+                title="Input and output tokens"
+              />
             </ChartCard>
 
-            <ChartCard footer={isNarrowViewport ? <LegendStats items={costSummaryItems} /> : undefined} title={costChartTitle}>
+            <ChartCard
+              footer={
+                isNarrowViewport ? (
+                  <LegendStats items={costSummaryItems} />
+                ) : undefined
+              }
+              title={costChartTitle}
+            >
               <CostBars
                 compactLabels={isNarrowViewport}
                 data={compactCostByDayData}
@@ -878,26 +1060,28 @@ function Home() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {newestFirstRollups.map((row: (typeof newestFirstRollups)[number]) => (
-                    <TableRow key={`${row.traceId}:cost`}>
-                      <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
-                        {row.traceId}
-                      </TableCell>
-                      <TableCell>{formatBucketLabel(row.day)}</TableCell>
-                      <TableCell className="text-right">
-                        {row.requests.toLocaleString('en-US')}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatCompact(row.totalTokens)}
-                      </TableCell>
-                      <TableCell className="hidden text-right md:table-cell">
-                        {(row.cachedShare * 100).toFixed(1)}%
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {formatCurrency(row.cost)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {newestFirstRollups.map(
+                    (row: (typeof newestFirstRollups)[number]) => (
+                      <TableRow key={`${row.traceId}:cost`}>
+                        <TableCell className="hidden font-medium text-indigo-700 sm:table-cell">
+                          {row.traceId}
+                        </TableCell>
+                        <TableCell>{formatBucketLabel(row.day)}</TableCell>
+                        <TableCell className="text-right">
+                          {row.requests.toLocaleString('en-US')}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCompact(row.totalTokens)}
+                        </TableCell>
+                        <TableCell className="hidden text-right md:table-cell">
+                          {(row.cachedShare * 100).toFixed(1)}%
+                        </TableCell>
+                        <TableCell className="text-right">
+                          {formatCurrency(row.cost)}
+                        </TableCell>
+                      </TableRow>
+                    ),
+                  )}
                 </TableBody>
               </Table>
             </CardContent>
@@ -984,6 +1168,65 @@ function ModelUsageBreakdownCard({ models }: ModelUsageBreakdownCardProps) {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function RepositoryFilterChip({
+  attributionCoverage,
+  availableRepositories,
+  onChange,
+  selectedRepositoryIds,
+}: RepositoryFilterChipProps) {
+  const value =
+    selectedRepositoryIds.length === 1 ? selectedRepositoryIds[0] : 'all'
+  const selectedName =
+    value === 'all'
+      ? 'All repositories'
+      : availableRepositories.find(
+          (repository) => repository.repositoryId === value,
+        )?.repositoryName || 'Repository'
+
+  return (
+    <div className="toolbar-chip gap-3">
+      <Github className="size-4" />
+      <Select
+        disabled={availableRepositories.length === 0}
+        onValueChange={(repositoryId) =>
+          onChange(repositoryId === 'all' ? [] : [repositoryId])
+        }
+        value={value}
+      >
+        <SelectTrigger
+          aria-label="Repository"
+          className="h-8 w-[164px] border-0 bg-transparent px-0 text-left text-sm font-medium text-slate-700 shadow-none focus:ring-0"
+        >
+          <SelectValue>
+            {availableRepositories.length === 0
+              ? 'No attribution data'
+              : selectedName}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectContent align="start">
+          <SelectItem value="all">All repositories</SelectItem>
+          {availableRepositories.map((repository) => (
+            <SelectItem
+              key={repository.repositoryId}
+              value={repository.repositoryId}
+            >
+              {repository.repositoryId === 'unattributed'
+                ? 'Unattributed'
+                : repository.repositoryName}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <span
+        className="text-[10px] uppercase tracking-[0.16em] text-slate-400"
+        title="Share of requests attributed to a repository for the current agent selection"
+      >
+        {(attributionCoverage * 100).toFixed(0)}% attributed
+      </span>
+    </div>
   )
 }
 
@@ -1281,12 +1524,23 @@ function LegendStats({ items }: LegendStatsProps) {
   )
 }
 
-function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: TrafficBarsProps) {
+function TrafficBars({
+  compactLabels = false,
+  data,
+  maxLabels = 6,
+  rotateLabels = false,
+}: TrafficBarsProps) {
   const maxRequests = Math.max(...data.map((item) => item.primary), 1)
   const maxCost = Math.max(...data.map((item) => item.secondary), 1)
 
   return (
-    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-bars-rotated' : 'chart-block chart-block-bars'}>
+    <div
+      className={
+        rotateLabels
+          ? 'chart-block chart-block-bars chart-block-bars-rotated'
+          : 'chart-block chart-block-bars'
+      }
+    >
       {data.map((item, index) => (
         <div className="bar-group" key={`${item.startDay}:${item.endDay}`}>
           <div className="bar-stack">
@@ -1309,18 +1563,30 @@ function TrafficBars({ compactLabels = false, data, maxLabels = 6, rotateLabels 
             rotateLabels ? (
               <span className="chart-label chart-label-rotated-slot">
                 <span className="chart-label-rotated-text">
-                  {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+                  {formatTrafficBucketLabel(
+                    item.startDay,
+                    item.endDay,
+                    compactLabels,
+                  )}
                 </span>
               </span>
             ) : (
               <span className="chart-label">
-                {formatTrafficBucketLabel(item.startDay, item.endDay, compactLabels)}
+                {formatTrafficBucketLabel(
+                  item.startDay,
+                  item.endDay,
+                  compactLabels,
+                )}
               </span>
             )
           ) : (
             <span
               aria-hidden
-              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder'}
+              className={
+                rotateLabels
+                  ? 'chart-label chart-label-placeholder chart-label-rotated-slot'
+                  : 'chart-label chart-label-placeholder'
+              }
             />
           )}
         </div>
@@ -1346,39 +1612,102 @@ function TrafficTrendChart({ data, title }: TrafficTrendChartProps) {
   const hoverTargets = buildLineChartHoverTargets(data.length)
 
   return (
-    <svg className="line-chart" viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`} role="img">
+    <svg
+      className="line-chart"
+      viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`}
+      role="img"
+    >
       <title>{title}</title>
-      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1={LINE_CHART_BOTTOM} y2={LINE_CHART_BOTTOM} className="chart-axis" />
-      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="89" y2="89" className="chart-gridline" />
-      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="52" y2="52" className="chart-gridline" />
+      <line
+        x1={LINE_CHART_LEFT}
+        x2={LINE_CHART_RIGHT}
+        y1={LINE_CHART_BOTTOM}
+        y2={LINE_CHART_BOTTOM}
+        className="chart-axis"
+      />
+      <line
+        x1={LINE_CHART_LEFT}
+        x2={LINE_CHART_RIGHT}
+        y1="89"
+        y2="89"
+        className="chart-gridline"
+      />
+      <line
+        x1={LINE_CHART_LEFT}
+        x2={LINE_CHART_RIGHT}
+        y1="52"
+        y2="52"
+        className="chart-gridline"
+      />
       {requestSeries.segments.map((points, index) => (
-        <polyline className="chart-line chart-line-grey" key={`requests-${index}`} points={points} />
+        <polyline
+          className="chart-line chart-line-grey"
+          key={`requests-${index}`}
+          points={points}
+        />
       ))}
       {costSeries.segments.map((points, index) => (
-        <polyline className="chart-line chart-line-red" key={`cost-${index}`} points={points} />
+        <polyline
+          className="chart-line chart-line-red"
+          key={`cost-${index}`}
+          points={points}
+        />
       ))}
       {cacheSeries.segments.map((points, index) => (
-        <polyline className="chart-line chart-line-muted" key={`cache-${index}`} points={points} />
+        <polyline
+          className="chart-line chart-line-muted"
+          key={`cache-${index}`}
+          points={points}
+        />
       ))}
       {requestSeries.points.map((point) => (
-        <circle className="chart-point chart-point-grey" cx={point.x} cy={point.y} key={`requests-point-${point.index}`} r="2.5" />
+        <circle
+          className="chart-point chart-point-grey"
+          cx={point.x}
+          cy={point.y}
+          key={`requests-point-${point.index}`}
+          r="2.5"
+        />
       ))}
       {costSeries.points.map((point) => (
-        <circle className="chart-point chart-point-red" cx={point.x} cy={point.y} key={`cost-point-${point.index}`} r="2.5" />
+        <circle
+          className="chart-point chart-point-red"
+          cx={point.x}
+          cy={point.y}
+          key={`cost-point-${point.index}`}
+          r="2.5"
+        />
       ))}
       {cacheSeries.points.map((point) => (
-        <circle className="chart-point chart-point-muted" cx={point.x} cy={point.y} key={`cache-point-${point.index}`} r="2.5" />
+        <circle
+          className="chart-point chart-point-muted"
+          cx={point.x}
+          cy={point.y}
+          key={`cache-point-${point.index}`}
+          r="2.5"
+        />
       ))}
       {hoverTargets.map((target, index) => (
         <g key={`traffic-hover-${data[index]?.day ?? index}`}>
           <title>{formatTrafficTooltip(data[index])}</title>
-          <rect className="chart-hover-target" height={LINE_CHART_HEIGHT} width={target.width} x={target.x} y={LINE_CHART_TOP} />
+          <rect
+            className="chart-hover-target"
+            height={LINE_CHART_HEIGHT}
+            width={target.width}
+            x={target.x}
+            y={LINE_CHART_TOP}
+          />
         </g>
       ))}
       {ticks.map((tick) => (
         <g key={`traffic-tick-${tick.day}`}>
           <title>{formatBucketLabel(tick.day)}</title>
-          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y={LINE_CHART_LABEL_Y}>
+          <text
+            className="chart-axis-label"
+            textAnchor="middle"
+            x={tick.x}
+            y={LINE_CHART_LABEL_Y}
+          >
             {formatLineAxisLabel(tick.day)}
           </text>
         </g>
@@ -1400,33 +1729,86 @@ function LineChart({ data, title }: LineChartProps) {
   const hoverTargets = buildLineChartHoverTargets(data.length)
 
   return (
-    <svg className="line-chart" viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`} role="img">
+    <svg
+      className="line-chart"
+      viewBox={`0 0 320 ${LINE_CHART_VIEWBOX_HEIGHT}`}
+      role="img"
+    >
       <title>{title}</title>
-      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1={LINE_CHART_BOTTOM} y2={LINE_CHART_BOTTOM} className="chart-axis" />
-      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="89" y2="89" className="chart-gridline" />
-      <line x1={LINE_CHART_LEFT} x2={LINE_CHART_RIGHT} y1="52" y2="52" className="chart-gridline" />
+      <line
+        x1={LINE_CHART_LEFT}
+        x2={LINE_CHART_RIGHT}
+        y1={LINE_CHART_BOTTOM}
+        y2={LINE_CHART_BOTTOM}
+        className="chart-axis"
+      />
+      <line
+        x1={LINE_CHART_LEFT}
+        x2={LINE_CHART_RIGHT}
+        y1="89"
+        y2="89"
+        className="chart-gridline"
+      />
+      <line
+        x1={LINE_CHART_LEFT}
+        x2={LINE_CHART_RIGHT}
+        y1="52"
+        y2="52"
+        className="chart-gridline"
+      />
       {primarySeries.segments.map((points, index) => (
-        <polyline className="chart-line chart-line-muted" key={`primary-${index}`} points={points} />
+        <polyline
+          className="chart-line chart-line-muted"
+          key={`primary-${index}`}
+          points={points}
+        />
       ))}
       {secondarySeries.segments.map((points, index) => (
-        <polyline className="chart-line" key={`secondary-${index}`} points={points} />
+        <polyline
+          className="chart-line"
+          key={`secondary-${index}`}
+          points={points}
+        />
       ))}
       {primarySeries.points.map((point) => (
-        <circle className="chart-point chart-point-muted" cx={point.x} cy={point.y} key={`primary-point-${point.index}`} r="2.5" />
+        <circle
+          className="chart-point chart-point-muted"
+          cx={point.x}
+          cy={point.y}
+          key={`primary-point-${point.index}`}
+          r="2.5"
+        />
       ))}
       {secondarySeries.points.map((point) => (
-        <circle className="chart-point" cx={point.x} cy={point.y} key={`secondary-point-${point.index}`} r="2.5" />
+        <circle
+          className="chart-point"
+          cx={point.x}
+          cy={point.y}
+          key={`secondary-point-${point.index}`}
+          r="2.5"
+        />
       ))}
       {hoverTargets.map((target, index) => (
         <g key={`input-output-hover-${data[index]?.day ?? index}`}>
           <title>{formatInputOutputTooltip(data[index])}</title>
-          <rect className="chart-hover-target" height={LINE_CHART_HEIGHT} width={target.width} x={target.x} y={LINE_CHART_TOP} />
+          <rect
+            className="chart-hover-target"
+            height={LINE_CHART_HEIGHT}
+            width={target.width}
+            x={target.x}
+            y={LINE_CHART_TOP}
+          />
         </g>
       ))}
       {ticks.map((tick) => (
         <g key={`input-output-tick-${tick.day}`}>
           <title>{formatBucketLabel(tick.day)}</title>
-          <text className="chart-axis-label" textAnchor="middle" x={tick.x} y={LINE_CHART_LABEL_Y}>
+          <text
+            className="chart-axis-label"
+            textAnchor="middle"
+            x={tick.x}
+            y={LINE_CHART_LABEL_Y}
+          >
             {formatLineAxisLabel(tick.day)}
           </text>
         </g>
@@ -1457,11 +1839,17 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
             />
           </div>
           {shouldRenderTick(index, data.length, 4) ? (
-            <span className="chart-label chart-label-wide" title={formatModelLabel(item.model, item.provider)}>
+            <span
+              className="chart-label chart-label-wide"
+              title={formatModelLabel(item.model, item.provider)}
+            >
               {formatModelTick(item.model)}
             </span>
           ) : (
-            <span aria-hidden className="chart-label chart-label-placeholder chart-label-wide" />
+            <span
+              aria-hidden
+              className="chart-label chart-label-placeholder chart-label-wide"
+            />
           )}
         </div>
       ))}
@@ -1469,11 +1857,25 @@ function ModelBars({ data, valueKey }: ModelBarsProps) {
   )
 }
 
-function TokenBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: TokenBarsProps) {
-  const maxTokens = Math.max(...data.map((item) => item.inputTokens + item.outputTokens), 1)
+function TokenBars({
+  compactLabels = false,
+  data,
+  maxLabels = 6,
+  rotateLabels = false,
+}: TokenBarsProps) {
+  const maxTokens = Math.max(
+    ...data.map((item) => item.inputTokens + item.outputTokens),
+    1,
+  )
 
   return (
-    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-bars-rotated' : 'chart-block chart-block-bars'}>
+    <div
+      className={
+        rotateLabels
+          ? 'chart-block chart-block-bars chart-block-bars-rotated'
+          : 'chart-block chart-block-bars'
+      }
+    >
       {data.map((item, index) => {
         const inputHeight = (item.inputTokens / maxTokens) * 100
         const outputHeight = (item.outputTokens / maxTokens) * 100
@@ -1492,20 +1894,30 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = 
             </div>
             {shouldRenderTick(index, data.length, maxLabels) ? (
               rotateLabels ? (
-                <span className="chart-label chart-label-rotated-slot" title={formatBucketLabel(item.day)}>
+                <span
+                  className="chart-label chart-label-rotated-slot"
+                  title={formatBucketLabel(item.day)}
+                >
                   <span className="chart-label-rotated-text">
                     {formatDayShort(item.day, compactLabels)}
                   </span>
                 </span>
               ) : (
-                <span className="chart-label" title={formatBucketLabel(item.day)}>
+                <span
+                  className="chart-label"
+                  title={formatBucketLabel(item.day)}
+                >
                   {formatDayShort(item.day, compactLabels)}
                 </span>
               )
             ) : (
               <span
                 aria-hidden
-                className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder'}
+                className={
+                  rotateLabels
+                    ? 'chart-label chart-label-placeholder chart-label-rotated-slot'
+                    : 'chart-label chart-label-placeholder'
+                }
               />
             )}
           </div>
@@ -1515,11 +1927,22 @@ function TokenBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = 
   )
 }
 
-function CostBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = false }: CostBarsProps) {
+function CostBars({
+  compactLabels = false,
+  data,
+  maxLabels = 6,
+  rotateLabels = false,
+}: CostBarsProps) {
   const maxCost = Math.max(...data.map((item) => item.cost), 1)
 
   return (
-    <div className={rotateLabels ? 'chart-block chart-block-bars chart-block-thick chart-block-bars-rotated' : 'chart-block chart-block-bars chart-block-thick'}>
+    <div
+      className={
+        rotateLabels
+          ? 'chart-block chart-block-bars chart-block-thick chart-block-bars-rotated'
+          : 'chart-block chart-block-bars chart-block-thick'
+      }
+    >
       {data.map((item, index) => (
         <div className="bar-group" key={item.day}>
           <div className="bar-stack bar-stack-wide">
@@ -1530,20 +1953,30 @@ function CostBars({ compactLabels = false, data, maxLabels = 6, rotateLabels = f
           </div>
           {shouldRenderTick(index, data.length, maxLabels) ? (
             rotateLabels ? (
-              <span className="chart-label chart-label-rotated-slot" title={formatBucketLabel(item.day)}>
+              <span
+                className="chart-label chart-label-rotated-slot"
+                title={formatBucketLabel(item.day)}
+              >
                 <span className="chart-label-rotated-text">
                   {formatDayShort(item.day, compactLabels)}
                 </span>
               </span>
             ) : (
-              <span className="chart-label chart-label-wide" title={formatBucketLabel(item.day)}>
+              <span
+                className="chart-label chart-label-wide"
+                title={formatBucketLabel(item.day)}
+              >
                 {formatDayShort(item.day, compactLabels)}
               </span>
             )
           ) : (
             <span
               aria-hidden
-              className={rotateLabels ? 'chart-label chart-label-placeholder chart-label-rotated-slot' : 'chart-label chart-label-placeholder chart-label-wide'}
+              className={
+                rotateLabels
+                  ? 'chart-label chart-label-placeholder chart-label-rotated-slot'
+                  : 'chart-label chart-label-placeholder chart-label-wide'
+              }
             />
           )}
         </div>
@@ -1556,7 +1989,10 @@ function useIsMobileBreakpoint(maxWidth = 640) {
   const [matches, setMatches] = useState(false)
 
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    if (
+      typeof window === 'undefined' ||
+      typeof window.matchMedia !== 'function'
+    ) {
       return undefined
     }
 
@@ -1572,25 +2008,32 @@ function useIsMobileBreakpoint(maxWidth = 640) {
   return matches
 }
 
-function parseDashboardSearch(search: Record<string, unknown>): DashboardSearch {
+function parseDashboardSearch(
+  search: Record<string, unknown>,
+): DashboardSearch {
   const tab = getDashboardTabParam(search.tab)
   const preset = getTimeframePresetParam(search.preset)
   const startDay = getIsoDayParam(search.startDay)
   const endDay = getIsoDayParam(search.endDay)
   const projects = getProjectsParam(search.projects)
+  const repositories = getProjectsParam(search.repositories)
   const trafficMode = getTrafficChartModeParam(search.trafficMode)
 
   return {
     endDay,
     preset,
     projects,
+    repositories,
     startDay,
     tab,
     trafficMode,
   }
 }
 
-function getSearchBackedTimeframe(search: DashboardSearch, fallback: TimeframeSelection): TimeframeSelection {
+function getSearchBackedTimeframe(
+  search: DashboardSearch,
+  fallback: TimeframeSelection,
+): TimeframeSelection {
   return {
     endDay: search.endDay ?? fallback.endDay,
     preset: search.preset ?? fallback.preset,
@@ -1598,7 +2041,10 @@ function getSearchBackedTimeframe(search: DashboardSearch, fallback: TimeframeSe
   }
 }
 
-function parseSelectedProjectIds(projects: string | undefined, availableProjectIds: string[]) {
+function parseSelectedProjectIds(
+  projects: string | undefined,
+  availableProjectIds: string[],
+) {
   if (!projects) {
     return []
   }
@@ -1613,18 +2059,30 @@ function parseSelectedProjectIds(projects: string | undefined, availableProjectI
   }
 
   const selectedSet = new Set(selected)
-  const ordered = availableProjectIds.filter((projectId) => selectedSet.has(projectId))
+  const ordered = availableProjectIds.filter((projectId) =>
+    selectedSet.has(projectId),
+  )
 
-  return ordered.length === 0 || ordered.length === availableProjectIds.length ? [] : ordered
+  return ordered.length === 0 || ordered.length === availableProjectIds.length
+    ? []
+    : ordered
 }
 
-function serializeSelectedProjectIds(selectedProjectIds: string[], availableProjectIds: string[]) {
-  if (selectedProjectIds.length === 0 || selectedProjectIds.length === availableProjectIds.length) {
+function serializeSelectedProjectIds(
+  selectedProjectIds: string[],
+  availableProjectIds: string[],
+) {
+  if (
+    selectedProjectIds.length === 0 ||
+    selectedProjectIds.length === availableProjectIds.length
+  ) {
     return undefined
   }
 
   const selectedSet = new Set(selectedProjectIds)
-  const ordered = availableProjectIds.filter((projectId) => selectedSet.has(projectId))
+  const ordered = availableProjectIds.filter((projectId) =>
+    selectedSet.has(projectId),
+  )
 
   return ordered.join(',') || undefined
 }
@@ -1633,10 +2091,15 @@ function sanitizeDashboardSearch(
   search: DashboardSearch,
   defaultTimeframe: TimeframeSelection,
   availableProjectIds: string[],
+  availableRepositoryIds: string[],
 ): DashboardSearch {
   const projects = serializeSelectedProjectIds(
     parseSelectedProjectIds(search.projects, availableProjectIds),
     availableProjectIds,
+  )
+  const repositories = serializeRepositorySelection(
+    parseRepositorySelection(search.repositories, availableRepositoryIds),
+    availableRepositoryIds,
   )
 
   const normalizedPreset = search.preset ?? defaultTimeframe.preset
@@ -1647,6 +2110,7 @@ function sanitizeDashboardSearch(
     endDay: normalizedPreset === 'custom' ? endDay : undefined,
     preset: normalizedPreset !== '30d' ? normalizedPreset : undefined,
     projects,
+    repositories,
     startDay: normalizedPreset === 'custom' ? startDay : undefined,
     tab: search.tab && search.tab !== 'overview' ? search.tab : undefined,
     trafficMode: search.trafficMode === 'line' ? 'line' : undefined,
@@ -1654,15 +2118,23 @@ function sanitizeDashboardSearch(
 }
 
 function getDashboardTabParam(value: unknown): DashboardTab | undefined {
-  return value === 'overview' || value === 'models' || value === 'cost' ? value : undefined
+  return value === 'overview' || value === 'models' || value === 'cost'
+    ? value
+    : undefined
 }
 
-function getTrafficChartModeParam(value: unknown): TrafficChartMode | undefined {
+function getTrafficChartModeParam(
+  value: unknown,
+): TrafficChartMode | undefined {
   return value === 'bars' || value === 'line' ? value : undefined
 }
 
 function getTimeframePresetParam(value: unknown): TimeframePreset | undefined {
-  return value === '24h' || value === '7d' || value === '30d' || value === '90d' || value === 'custom'
+  return value === '24h' ||
+    value === '7d' ||
+    value === '30d' ||
+    value === '90d' ||
+    value === 'custom'
     ? value
     : undefined
 }
@@ -1672,10 +2144,14 @@ function getIsoDayParam(value: unknown) {
 }
 
 function getProjectsParam(value: unknown) {
-  return typeof value === 'string' && value.trim().length > 0 ? value : undefined
+  return typeof value === 'string' && value.trim().length > 0
+    ? value
+    : undefined
 }
 
-function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSelection {
+function getInitialTimeframeSelection(
+  snapshot: DashboardSnapshot,
+): TimeframeSelection {
   const dayCount = snapshot.filters.dailyRows.length
 
   if (dayCount <= 1) {
@@ -1701,7 +2177,10 @@ function getInitialTimeframeSelection(snapshot: DashboardSnapshot): TimeframeSel
   }
 }
 
-function getTimeframeTriggerLabel(snapshot: DashboardSnapshot, selection: TimeframeSelection) {
+function getTimeframeTriggerLabel(
+  snapshot: DashboardSnapshot,
+  selection: TimeframeSelection,
+) {
   if (selection.preset === 'custom') {
     return 'Custom range'
   }
@@ -1773,7 +2252,9 @@ function formatCompact(value: number) {
   }).format(value)
 }
 
-function calculateAverageTrafficCacheShare(data: Array<{ primary: number; tertiary: number }>) {
+function calculateAverageTrafficCacheShare(
+  data: Array<{ primary: number; tertiary: number }>,
+) {
   if (data.length === 0) {
     return 0
   }
@@ -1781,7 +2262,10 @@ function calculateAverageTrafficCacheShare(data: Array<{ primary: number; tertia
   const totalRequests = data.reduce((sum, item) => sum + item.primary, 0)
 
   if (totalRequests > 0) {
-    return data.reduce((sum, item) => sum + item.primary * item.tertiary, 0) / totalRequests
+    return (
+      data.reduce((sum, item) => sum + item.primary * item.tertiary, 0) /
+      totalRequests
+    )
   }
 
   return data.reduce((sum, item) => sum + item.tertiary, 0) / data.length
@@ -1869,7 +2353,11 @@ function shouldRenderTick(index: number, total: number, maxLabels = 6) {
   return index % stride === 0
 }
 
-function formatTrafficBucketLabel(startDay: string, endDay: string, compact = false) {
+function formatTrafficBucketLabel(
+  startDay: string,
+  endDay: string,
+  compact = false,
+) {
   if (startDay === endDay) {
     return formatDayShort(startDay, compact)
   }
@@ -1924,8 +2412,11 @@ function toPolylineSegments(
       return
     }
 
-    const value = point.missing && options?.fillMissingWithZero ? 0 : point.value
-    currentSegment.push(`${getLineChartX(index, points.length)},${getLineChartY(value, maxValue)}`)
+    const value =
+      point.missing && options?.fillMissingWithZero ? 0 : point.value
+    currentSegment.push(
+      `${getLineChartX(index, points.length)},${getLineChartY(value, maxValue)}`,
+    )
   })
 
   if (currentSegment.length >= 2) {
@@ -1947,12 +2438,14 @@ function buildLineChartSeries(
         return []
       }
 
-      return [{
-        index,
-        value: point.value,
-        x: getLineChartX(index, points.length),
-        y: getLineChartY(point.value, maxValue),
-      }]
+      return [
+        {
+          index,
+          value: point.value,
+          x: getLineChartX(index, points.length),
+          y: getLineChartY(point.value, maxValue),
+        },
+      ]
     }),
     segments: toPolylineSegments(points, options),
   }
@@ -1964,10 +2457,12 @@ function buildLineChartTicks(days: string[], maxLabels = 6) {
       return []
     }
 
-    return [{
-      day,
-      x: getLineChartX(index, days.length),
-    }]
+    return [
+      {
+        day,
+        x: getLineChartX(index, days.length),
+      },
+    ]
   })
 }
 
@@ -1976,16 +2471,24 @@ function buildLineChartHoverTargets(total: number) {
     return []
   }
 
-  const slotWidth = total > 1 ? LINE_CHART_WIDTH / (total - 1) : LINE_CHART_WIDTH
+  const slotWidth =
+    total > 1 ? LINE_CHART_WIDTH / (total - 1) : LINE_CHART_WIDTH
 
   return Array.from({ length: total }, (_, index) => ({
     width: slotWidth,
-    x: Math.max(0, Math.min(320 - slotWidth, getLineChartX(index, total) - slotWidth / 2)),
+    x: Math.max(
+      0,
+      Math.min(320 - slotWidth, getLineChartX(index, total) - slotWidth / 2),
+    ),
   }))
 }
 
-function getLineChartMaxValue(points: Array<{ missing?: boolean; value: number }>) {
-  const presentValues = points.filter((point) => !point.missing).map((point) => point.value)
+function getLineChartMaxValue(
+  points: Array<{ missing?: boolean; value: number }>,
+) {
+  const presentValues = points
+    .filter((point) => !point.missing)
+    .map((point) => point.value)
   return Math.max(...presentValues, 1)
 }
 
@@ -1993,7 +2496,10 @@ function getLineChartX(index: number, total: number) {
   return LINE_CHART_LEFT + index * (LINE_CHART_WIDTH / Math.max(total - 1, 1))
 }
 
-function getLineChartY(value: number, maxValueOrPoints: number | Array<{ missing?: boolean; value: number }>) {
+function getLineChartY(
+  value: number,
+  maxValueOrPoints: number | Array<{ missing?: boolean; value: number }>,
+) {
   const maxValue =
     typeof maxValueOrPoints === 'number'
       ? maxValueOrPoints
@@ -2067,6 +2573,13 @@ type ProjectFilterChipProps = {
   selectedProjectIds: string[]
 }
 
+type RepositoryFilterChipProps = {
+  attributionCoverage: number
+  availableRepositories: DashboardSnapshot['repositories']['available']
+  onChange: (repositoryIds: string[]) => void
+  selectedRepositoryIds: string[]
+}
+
 type ProjectBreakdownCardProps = {
   projects: DashboardProjectSummary[]
 }
@@ -2079,6 +2592,7 @@ type DashboardSearch = {
   endDay?: string
   preset?: TimeframePreset
   projects?: string
+  repositories?: string
   startDay?: string
   tab?: DashboardTab
   trafficMode?: TrafficChartMode

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 
@@ -477,3 +478,232 @@ def test_build_payload_uses_utc_day_boundaries(tmp_path, monkeypatch):
     payload = build_payload(_config(db_path))
 
     assert payload["rollups"][0]["usageDate"] == "2025-11-19"
+
+
+def test_build_payload_publishes_privacy_safe_reconciled_repository_rollups(tmp_path, monkeypatch):
+    repo = tmp_path / "source" / "atlas"
+    repo.mkdir(parents=True)
+    (repo / "nested").mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(
+        ["git", "-C", str(repo), "remote", "add", "origin", "https://user:secret@github.com/Tevpro/atlas.git"],
+        check=True,
+    )
+    db_path = tmp_path / "state.db"
+    _make_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+    conn.execute("ALTER TABLE sessions ADD COLUMN git_repo_root TEXT")
+    conn.execute("UPDATE sessions SET git_repo_root = ? WHERE id = 's1'", (str(repo),))
+    conn.execute("UPDATE sessions SET cwd = ? WHERE id = 's2'", (str(repo / 'nested'),))
+    conn.commit()
+    conn.close()
+
+    fixed_now = _cli.datetime(2025, 11, 19, 3, 15, tzinfo=_cli.timezone.utc)
+    monkeypatch.setattr(_cli, "_utc_now", lambda: fixed_now)
+    payload = build_payload(_config(db_path))
+
+    assert payload["schemaVersion"] == 2
+    daily = [row for row in payload["repositoryRollups"] if "T" not in row["usageDate"]]
+    assert {row["attributionStatus"] for row in daily} == {"exact", "cwd-derived"}
+    assert {row["repository"]["key"] for row in daily} == {"github.com/Tevpro/atlas"}
+    assert {row["repository"]["name"] for row in daily} == {"atlas"}
+    assert all(str(tmp_path) not in str(row) and "secret" not in str(row) for row in daily)
+    aggregate = next(row for row in payload["rollups"] if row["usageDate"] == "2025-11-19")
+    assert sum(row["totalTokens"] for row in daily) == aggregate["totalTokens"]
+    assert sum(row["requests"] for row in daily) == aggregate["requests"]
+    assert sum(model["tokens"] for row in daily for model in row["models"]) == aggregate["totalTokens"]
+
+
+def test_remote_identity_preserves_non_default_ports_and_handles_ipv6_scp():
+    sanitize = _cli._sanitize_remote_identity
+
+    assert sanitize('https://git.example.com:8443/org/repo.git') == 'git.example.com:8443/org/repo'
+    assert sanitize('https://git.example.com:9443/org/repo.git') == 'git.example.com:9443/org/repo'
+    assert sanitize('https://git.example.com:443/org/repo.git') == 'git.example.com/org/repo'
+    assert sanitize('http://git.example.com:80/org/repo.git') == 'git.example.com/org/repo'
+    assert sanitize('ssh://git@[2001:db8::1]:2222/org/repo.git') == '[2001:db8::1]:2222/org/repo'
+    assert sanitize('git@[2001:db8::1]:org/repo.git') == '[2001:db8::1]/org/repo'
+    assert sanitize('git@git.example.com:org/repo.git') == 'git.example.com/org/repo'
+
+
+def test_build_payload_marks_legacy_schema_sessions_unattributed_without_failing(tmp_path):
+    db_path = tmp_path / "state.db"
+    _make_db(db_path)
+
+    payload = build_payload(_config(db_path))
+
+    daily = [row for row in payload["repositoryRollups"] if "T" not in row["usageDate"]]
+    assert len(daily) == 1
+    assert daily[0]["repository"] == {"key": "unattributed", "name": "Unattributed"}
+    assert daily[0]["attributionStatus"] == "unknown"
+    assert daily[0]["totalTokens"] == payload["rollups"][0]["totalTokens"]
+
+
+def test_build_payload_uses_one_immutable_fetch_during_concurrent_write(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_db(db_path)
+    fixed_now = _cli.datetime(2025, 11, 19, 3, 15, tzinfo=_cli.timezone.utc)
+    monkeypatch.setattr(_cli, "_utc_now", lambda: fixed_now)
+
+    original_fetch = _cli._fetch_session_metrics
+    fetch_count = 0
+
+    def fetch_then_write(connection, *, since=None):
+        nonlocal fetch_count
+        fetch_count += 1
+        rows = original_fetch(connection, since=since)
+        if fetch_count == 1:
+            writer = sqlite3.connect(db_path)
+            writer.execute(
+                """
+                INSERT INTO sessions (
+                    id, source, model, started_at, ended_at, api_call_count,
+                    input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+                    reasoning_tokens, estimated_cost_usd, actual_cost_usd
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                ("concurrent", "cli", "new-model", 1763517600.0, 1763517600.0,
+                 100, 1000, 0, 0, 0, 0, 10.0, None),
+            )
+            writer.commit()
+            writer.close()
+        return rows
+
+    monkeypatch.setattr(_cli, "_fetch_session_metrics", fetch_then_write)
+    payload = build_payload(_config(db_path))
+
+    assert fetch_count == 1
+    daily = next(row for row in payload["rollups"] if row["usageDate"] == "2025-11-19")
+    repositories = [row for row in payload["repositoryRollups"] if row["usageDate"] == "2025-11-19"]
+    assert daily["requests"] == 5
+    assert sum(row["requests"] for row in repositories) == daily["requests"]
+    assert sum(model["requests"] for model in daily["models"]) == daily["requests"]
+
+
+def test_cost_rounding_reconciles_aggregate_repositories_and_models(tmp_path, monkeypatch):
+    db_path = tmp_path / "state.db"
+    _make_empty_db(db_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute("ALTER TABLE sessions ADD COLUMN cwd TEXT")
+    conn.execute("ALTER TABLE sessions ADD COLUMN git_repo_root TEXT")
+    conn.executemany(
+        """
+        INSERT INTO sessions (
+            id, source, model, started_at, ended_at, api_call_count,
+            input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+            reasoning_tokens, estimated_cost_usd, actual_cost_usd, cwd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            ("a", "cli", "model-a", 1763510400.0, 1763510400.0, 1, 1, 0, 0, 0, 0, 0.00006, None, "repo-a"),
+            ("b", "cli", "model-b", 1763510400.0, 1763510400.0, 1, 1, 0, 0, 0, 0, 0.00006, None, "repo-b"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    fixed_now = _cli.datetime(2025, 11, 19, 3, 15, tzinfo=_cli.timezone.utc)
+    monkeypatch.setattr(_cli, "_utc_now", lambda: fixed_now)
+    monkeypatch.setattr(
+        _cli,
+        "_resolve_session_repository",
+        lambda row: ({"key": f"example.com/org/{row['cwd']}", "name": row["cwd"]}, "exact"),
+    )
+
+    payload = build_payload(_config(db_path))
+    aggregate = next(row for row in payload["rollups"] if row["usageDate"] == "2025-11-19")
+    repositories = [row for row in payload["repositoryRollups"] if row["usageDate"] == "2025-11-19"]
+
+    assert aggregate["estimatedCostUsd"] == 0.0001
+    assert abs(sum(model["estimatedCostUsd"] for model in aggregate["models"]) - aggregate["estimatedCostUsd"]) <= 1e-6
+    assert abs(sum(row["estimatedCostUsd"] for row in repositories) - aggregate["estimatedCostUsd"]) <= 1e-6
+    for row in repositories:
+        assert abs(sum(model["estimatedCostUsd"] for model in row["models"]) - row["estimatedCostUsd"]) <= 1e-6
+
+
+def test_repository_discovery_timeout_marks_session_unattributed(monkeypatch):
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd="git rev-parse", timeout=5)
+
+    monkeypatch.setattr(_cli, "_git_output", timeout)
+
+    assert _cli._git_repository_identity(Path(".")) is None
+
+
+def test_remote_lookup_timeout_falls_back_to_local_repository_identity(monkeypatch, tmp_path):
+    common_dir = tmp_path / ".git"
+    common_dir.mkdir()
+
+    def git_output(path, *args):
+        if args[:2] == ("remote", "get-url"):
+            raise subprocess.TimeoutExpired(cmd="git remote get-url origin", timeout=5)
+        if args[-1] == "--show-toplevel":
+            return str(tmp_path)
+        return str(common_dir)
+
+    monkeypatch.setattr(_cli, "_git_output", git_output)
+
+    identity = _cli._git_repository_identity(tmp_path)
+    assert identity is not None
+    assert identity["key"].startswith("local:")
+    assert identity["name"] == tmp_path.name
+
+
+def test_scp_remote_identity_never_includes_query_or_fragment_credentials():
+    sanitize = _cli._sanitize_remote_identity
+
+    assert sanitize("git@git.example.com:org/repo.git?access_token=secret") == "git.example.com/org/repo"
+    assert sanitize("git@git.example.com:org/repo.git#oauth-secret") == "git.example.com/org/repo"
+    assert sanitize("git@git.example.com:org/repo.git?token=secret#fragment") == "git.example.com/org/repo"
+
+
+def test_repository_rollups_cache_git_resolution_per_unique_path_before_bucket_expansion(tmp_path, monkeypatch):
+    repository = tmp_path / "repository"
+    unattributed = tmp_path / "not-a-repository"
+    repository.mkdir()
+    unattributed.mkdir()
+    calls: list[tuple[Path, tuple[str, ...]]] = []
+
+    def git_output(path, *args):
+        calls.append((path, args))
+        if path == unattributed:
+            raise subprocess.CalledProcessError(128, ["git", "rev-parse"])
+        if args[-1] == "--show-toplevel":
+            return str(repository)
+        if args[-1] == "--git-common-dir":
+            return str(repository / ".git")
+        return "https://github.com/Tevpro/repository.git"
+
+    monkeypatch.setattr(_cli, "_git_output", git_output)
+    session_ts = _cli.datetime(2025, 11, 19, 3, 0, tzinfo=_cli.timezone.utc).timestamp()
+
+    def row(path, model):
+        return {
+            "session_ts": session_ts,
+            "model": model,
+            "api_calls": 1,
+            "input_tokens": 1,
+            "output_tokens": 0,
+            "cached_tokens": 0,
+            "reasoning_tokens": 0,
+            "cost_usd": 0,
+            "git_repo_root": str(path),
+            "cwd": None,
+        }
+
+    rollups = _cli._build_repository_rollups(
+        [
+            row(repository, "model-a"),
+            row(repository, "model-b"),
+            row(unattributed, "model-a"),
+            row(unattributed, "model-b"),
+        ],
+        days_back=7,
+        now=_cli.datetime(2025, 11, 19, 3, 15, tzinfo=_cli.timezone.utc),
+    )
+
+    assert len([item for item in rollups if item["usageDate"] == "2025-11-19"]) == 2
+    assert len([item for item in rollups if item["usageDate"] == "2025-11-19T03:00:00Z"]) == 2
+    assert [path for path, _ in calls].count(repository) == 3
+    assert [path for path, _ in calls].count(unattributed) == 1
