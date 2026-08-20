@@ -9,9 +9,54 @@ import { buildSnapshotFromRollups } from '#/lib/token-analytics'
 
 const snapshot = buildSnapshotFromRollups({
   dailyRows: [
-    { cachedTokens: 120, cost: 1.25, day: '2026-05-01', inputTokens: 1000, outputTokens: 400, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', requests: 10, totalTokens: 1400 },
-    { cachedTokens: 240, cost: 2.5, day: '2026-05-02', inputTokens: 2000, outputTokens: 800, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', requests: 20, totalTokens: 2800 },
-    { cachedTokens: 360, cost: 3.75, day: '2026-05-03', inputTokens: 3000, outputTokens: 1200, projectId: 'workspace:atlas', projectName: 'Atlas', projectProvider: 'Hermes', projectSlug: 'atlas', requests: 30, totalTokens: 4200 },
+    {
+      actualCostObservedSessions: 0,
+      actualCostObservedTokens: 0,
+      actualCostUsd: null,
+      cachedTokens: 120,
+      cost: 1.25,
+      day: '2026-05-01',
+      inputTokens: 1000,
+      outputTokens: 400,
+      projectId: 'workspace:atlas',
+      projectName: 'Atlas',
+      projectProvider: 'Hermes',
+      projectSlug: 'atlas',
+      requests: 10,
+      totalTokens: 1400,
+    },
+    {
+      actualCostObservedSessions: 1,
+      actualCostObservedTokens: 2800,
+      actualCostUsd: 0,
+      cachedTokens: 240,
+      cost: 2.5,
+      day: '2026-05-02',
+      inputTokens: 2000,
+      outputTokens: 800,
+      projectId: 'workspace:atlas',
+      projectName: 'Atlas',
+      projectProvider: 'Hermes',
+      projectSlug: 'atlas',
+      requests: 20,
+      totalTokens: 2800,
+    },
+    {
+      actualCostObservedSessions: 1,
+      actualCostObservedTokens: 4200,
+      actualCostUsd: 3,
+      cachedTokens: 360,
+      cost: 3.75,
+      day: '2026-05-03',
+      inputTokens: 3000,
+      outputTokens: 1200,
+      projectId: 'workspace:atlas',
+      projectName: 'Atlas',
+      projectProvider: 'Hermes',
+      projectSlug: 'atlas',
+      requests: 30,
+      totalTokens: 4200,
+    },
   ],
   environment: 'production',
   generatedAt: '2026-05-03T12:00:00Z',
@@ -82,10 +127,26 @@ describe('dashboard timeframe filtering', () => {
     })
 
     expect(filtered.headline.rangeLabel).toBe('May 2, 2026 to May 3, 2026')
-    expect(filtered.kpis.find((item) => item.label === 'API Calls')?.value).toBe('50')
-    expect(filtered.table.map((row) => row.day)).toEqual(['2026-05-02', '2026-05-03'])
-    expect(filtered.charts.models[0]).toMatchObject({ model: 'gpt-5.4', requests: 35, tokens: 4800 })
-    expect(filtered.issues).toEqual([{ count: 2, severity: 'high', title: 'Spend spike' }])
+    expect(
+      filtered.kpis.find((item) => item.label === 'API Calls')?.value,
+    ).toBe('50')
+    expect(filtered.table.map((row) => row.day)).toEqual([
+      '2026-05-02',
+      '2026-05-03',
+    ])
+    expect(filtered.charts.models[0]).toMatchObject({
+      model: 'gpt-5.4',
+      requests: 35,
+      tokens: 4800,
+    })
+    expect(filtered.issues).toEqual([
+      { count: 2, severity: 'high', title: 'Spend spike' },
+    ])
+    expect(filtered.actualCost).toMatchObject({
+      coverageRatio: 1,
+      reportedCostUsd: 3,
+      totalTokens: 7000,
+    })
   })
 
   it('clamps relative presets to the available bounds', () => {

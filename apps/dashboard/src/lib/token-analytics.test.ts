@@ -60,6 +60,152 @@ describe('token analytics cache calculations', () => {
     expect(calculateCachedShare(row)).toBe(0.2)
   })
 
+  it('distinguishes reported zero actual cost from missing actual cost', () => {
+    const project = {
+      projectId: 'workspace:atlas',
+      projectName: 'Atlas',
+      projectProvider: 'Hermes',
+      projectSlug: 'atlas',
+    }
+    const snapshot = buildSnapshotFromRollups({
+      dailyRows: [
+        {
+          ...project,
+          actualCostObservedSessions: 0,
+          actualCostObservedTokens: 0,
+          actualCostUsd: null,
+          cachedTokens: 0,
+          cost: 1,
+          day: '2026-08-19',
+          inputTokens: 500,
+          outputTokens: 0,
+          requests: 1,
+          totalTokens: 500,
+        },
+        {
+          ...project,
+          actualCostObservedSessions: 1,
+          actualCostObservedTokens: 500,
+          actualCostUsd: 0,
+          cachedTokens: 0,
+          cost: 1,
+          day: '2026-08-20',
+          inputTokens: 500,
+          outputTokens: 0,
+          requests: 1,
+          totalTokens: 500,
+        },
+      ],
+      environment: 'production',
+      generatedAt: '2026-08-20T18:00:00Z',
+      issues: [],
+      models: [],
+      sourceLabel: 'Live Hermes data',
+    })
+
+    expect(snapshot.actualCost).toEqual({
+      coverageRatio: 0.5,
+      observedSessions: 1,
+      observedTokens: 500,
+      reportedCostUsd: 0,
+      totalTokens: 1_000,
+    })
+  })
+
+  it('prices model rows with the rate effective on each day', () => {
+    const project = {
+      projectId: 'workspace:atlas',
+      projectName: 'Atlas',
+      projectProvider: 'Hermes',
+      projectSlug: 'atlas',
+    }
+    const modelRowsByDay = ['2026-08-19', '2026-08-20'].map((day) => ({
+      ...project,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      cost: 0,
+      day,
+      inputTokens: 1_000_000,
+      model: 'gpt-5.4',
+      outputTokens: 0,
+      provider: 'OpenAI',
+      reasoningTokens: 0,
+      requests: 1,
+      tokens: 1_000_000,
+    }))
+
+    const snapshot = buildSnapshotFromRollups({
+      dailyRows: modelRowsByDay.map((row) => ({
+        ...project,
+        cachedTokens: 0,
+        cost: 0,
+        day: row.day,
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        requests: 1,
+        totalTokens: 1_000_000,
+      })),
+      environment: 'production',
+      generatedAt: '2026-08-20T18:00:00Z',
+      issues: [],
+      modelRowsByDay,
+      models: [
+        {
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          cost: 0,
+          inputTokens: 2_000_000,
+          model: 'gpt-5.4',
+          outputTokens: 0,
+          provider: 'OpenAI',
+          reasoningTokens: 0,
+          requests: 2,
+          tokens: 2_000_000,
+        },
+      ],
+      publicPricing: {
+        availability: 'available',
+        rates: [
+          {
+            cacheReadMicroUsdPerMtok: 0,
+            cacheWriteMicroUsdPerMtok: 0,
+            effectiveDay: '2026-08-19',
+            fetchedAt: 1,
+            inputMicroUsdPerMtok: 2_000_000,
+            outputMicroUsdPerMtok: 0,
+            priceKey: 'openai:gpt-5.4',
+            requestedModel: 'gpt-5.4',
+            requestedProvider: 'OpenAI',
+            resolved: true,
+            sourceModel: 'gpt-5.4',
+            sourceProvider: 'openai',
+            sourceUrl: 'https://pricing.example/catalog.json',
+          },
+          {
+            cacheReadMicroUsdPerMtok: 0,
+            cacheWriteMicroUsdPerMtok: 0,
+            effectiveDay: '2026-08-20',
+            fetchedAt: 2,
+            inputMicroUsdPerMtok: 3_000_000,
+            outputMicroUsdPerMtok: 0,
+            priceKey: 'openai:gpt-5.4',
+            requestedModel: 'gpt-5.4',
+            requestedProvider: 'OpenAI',
+            resolved: true,
+            sourceModel: 'gpt-5.4',
+            sourceProvider: 'openai',
+            sourceUrl: 'https://pricing.example/catalog.json',
+          },
+        ],
+        sourceUrl: 'https://pricing.example/catalog.json',
+      },
+      sourceLabel: 'Live Hermes data',
+    })
+
+    expect(snapshot.pricing.projectedCostMicroUsd).toBe(5_000_000)
+    expect(snapshot.pricing.coveredTokens).toBe(2_000_000)
+  })
+
   it('aggregates daily totals while preserving per-project breakdowns', () => {
     const snapshot = buildSnapshotFromRollups({
       dailyRows: [

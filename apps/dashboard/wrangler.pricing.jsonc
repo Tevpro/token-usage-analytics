@@ -1,11 +1,13 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "token-usage-analytics",
-  "main": "@tanstack/react-start/server-entry",
+  "name": "token-usage-analytics-pricing-snapshot",
+  "main": "src/pricing-worker.ts",
   "compatibility_date": "2025-09-02",
   "compatibility_flags": ["nodejs_compat"],
+  "triggers": {
+    "crons": ["5 0 * * *"]
+  },
   "vars": {
-    "APP_ENV": "development",
     "PUBLIC_MODEL_PRICING_SOURCE_URL": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
   },
   "d1_databases": [
@@ -13,7 +15,7 @@
       "binding": "DB",
       "database_name": "token_analytics",
       "database_id": "ad6be060-9240-4b93-be49-e1e809b2213a",
-      "migrations_dir": "./migrations"
-    }
-  ]
+      "migrations_dir": "./migrations",
+    },
+  ],
 }

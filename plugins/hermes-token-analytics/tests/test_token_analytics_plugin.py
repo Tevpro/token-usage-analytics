@@ -181,10 +181,34 @@ def test_build_payload_aggregates_tokens_costs_and_models(tmp_path):
     assert day["cachedTokens"] == 35
     assert day["reasoningTokens"] == 5
     assert day["totalTokens"] == 260
-    assert day["estimatedCostUsd"] == 1.75
+    assert day["estimatedCostUsd"] == 2.0
+    assert day["actualCostUsd"] == 0.5
+    assert day["actualCostObservedSessions"] == 1
+    assert day["actualCostObservedTokens"] == 85
     assert [model["model"] for model in day["models"]] == ["gpt-5.4", "claude-sonnet-4"]
     assert day["models"][0]["tokens"] == 175
-    assert day["models"][1]["estimatedCostUsd"] == 0.5
+    assert day["models"][0] == {
+        "cacheReadTokens": 20,
+        "cacheWriteTokens": 10,
+        "actualCostObservedSessions": 0,
+        "actualCostObservedTokens": 0,
+        "actualCostUsd": None,
+        "estimatedCostUsd": 1.25,
+        "inputTokens": 100,
+        "model": "gpt-5.4",
+        "outputTokens": 40,
+        "provider": "OpenAI",
+        "reasoningTokens": 5,
+        "requests": 3,
+        "tokens": 175,
+    }
+    assert day["models"][1]["provider"] == "Anthropic"
+    assert day["models"][1]["cacheReadTokens"] == 0
+    assert day["models"][1]["cacheWriteTokens"] == 5
+    assert day["models"][1]["estimatedCostUsd"] == 0.75
+    assert day["models"][1]["actualCostUsd"] == 0.5
+    assert day["models"][1]["actualCostObservedSessions"] == 1
+    assert day["models"][1]["actualCostObservedTokens"] == 85
 
 
 def test_build_payload_omits_idle_hourly_rollups_and_only_sends_real_usage_hours(tmp_path, monkeypatch):
@@ -206,8 +230,17 @@ def test_build_payload_omits_idle_hourly_rollups_and_only_sends_real_usage_hours
     assert midnight_hour["totalTokens"] == 175
     assert midnight_hour["models"] == [
         {
+            "actualCostObservedSessions": 0,
+            "actualCostObservedTokens": 0,
+            "actualCostUsd": None,
+            "cacheReadTokens": 20,
+            "cacheWriteTokens": 10,
             "estimatedCostUsd": 1.25,
+            "inputTokens": 100,
             "model": "gpt-5.4",
+            "outputTokens": 40,
+            "provider": "OpenAI",
+            "reasoningTokens": 5,
             "requests": 3,
             "tokens": 175,
         }
@@ -218,8 +251,17 @@ def test_build_payload_omits_idle_hourly_rollups_and_only_sends_real_usage_hours
     assert one_am_hour["totalTokens"] == 85
     assert one_am_hour["models"] == [
         {
-            "estimatedCostUsd": 0.5,
+            "actualCostObservedSessions": 1,
+            "actualCostObservedTokens": 85,
+            "actualCostUsd": 0.5,
+            "cacheReadTokens": 0,
+            "cacheWriteTokens": 5,
+            "estimatedCostUsd": 0.75,
+            "inputTokens": 50,
             "model": "claude-sonnet-4",
+            "outputTokens": 30,
+            "provider": "Anthropic",
+            "reasoningTokens": 0,
             "requests": 2,
             "tokens": 85,
         }

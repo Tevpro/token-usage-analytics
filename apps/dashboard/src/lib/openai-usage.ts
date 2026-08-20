@@ -2,6 +2,8 @@ import { formatHoustonDay, formatHoustonTimestamp } from '#/lib/dashboard-timezo
 import { isValidIsoDay } from '#/lib/dashboard-timeframe'
 import type { TimeframeSelection } from '#/lib/dashboard-timeframe'
 import type { CloudflareAppEnv } from '#/lib/runtime'
+import { loadPublicModelPricing } from '#/lib/public-model-pricing'
+import type { ModelPricingReference } from '#/lib/public-model-pricing'
 import type {
   DashboardIssueByDay,
   DashboardModelDailyUsage,
@@ -15,6 +17,9 @@ import {
 } from '#/lib/token-analytics'
 
 type DailyRollupRow = DashboardProjectOption & {
+  actualCostObservedSessions: number
+  actualCostObservedTokens: number
+  actualCostUsd: number | null
   cachedTokens: number
   cost: number
   createdAt: number
@@ -26,10 +31,28 @@ type DailyRollupRow = DashboardProjectOption & {
   totalTokens: number
 }
 
-type ModelSummaryRow = {
-  cost: number
+type ModelUsageAccumulator = {
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  cost?: number
+  inputTokens: number
   model: string
+  outputTokens: number
   provider: string
+  reasoningTokens: number
+  requests: number
+  tokens: number
+}
+
+type ModelSummaryRow = {
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  cost: number
+  inputTokens: number
+  model: string
+  outputTokens: number
+  provider: string
+  reasoningTokens: number
   requests: number
   tokens: number
 }
@@ -89,6 +112,9 @@ type OpenAiCostResponse = {
 }
 
 type DayAccumulator = {
+  actualCostObservedSessions: number
+  actualCostObservedTokens: number
+  actualCostUsd: number | null
   avgLatencyMs: number
   cachedTokens: number
   cost: number
@@ -101,16 +127,7 @@ type DayAccumulator = {
     severity: 'high' | 'medium' | 'low'
     title: string
   }>
-  models: Map<
-    string,
-    {
-      cost?: number
-      model: string
-      provider: string
-      requests: number
-      tokens: number
-    }
-  >
+  models: Map<string, ModelUsageAccumulator>
   outputTokens: number
   p95LatencyMs: number
   requests: number
@@ -132,6 +149,9 @@ export type ExternalIngestPayload = {
   environment?: string
   generatedAt?: string
   rollups: Array<{
+    actualCostObservedSessions?: number
+    actualCostObservedTokens?: number
+    actualCostUsd?: number | null
     avgLatencyMs?: number
     cachedTokens?: number
     errorCount?: number
@@ -144,9 +164,14 @@ export type ExternalIngestPayload = {
       title: string
     }>
     models?: Array<{
+      cacheReadTokens?: number
+      cacheWriteTokens?: number
       estimatedCostUsd?: number
+      inputTokens?: number
       model: string
+      outputTokens?: number
       provider?: string
+      reasoningTokens?: number
       requests?: number
       tokens?: number
     }>
@@ -218,6 +243,12 @@ export async function loadDashboardSnapshotForRequest(
 export async function ingestExternalRollupsToD1(
   env: CloudflareAppEnv,
   payload: ExternalIngestPayload,
+  options: {
+    capturePricing?: (
+      env: CloudflareAppEnv,
+      references: ModelPricingReference[],
+    ) => Promise<unknown>
+  } = {},
 ): Promise<SyncResult> {
   const workspace = getExternalWorkspaceConfig(payload)
   const environment = payload.environment || env.APP_ENV || 'production'
@@ -239,6 +270,8 @@ export async function ingestExternalRollupsToD1(
 
   const firstDay = dayEntries[0].day
   const lastDay = dayEntries[dayEntries.length - 1].day
+  const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
+  const dailyActualCostAvailable = await hasDailyActualCostColumns(env.DB)
 
   await env.DB.batch([
     env.DB.prepare(
@@ -254,27 +287,14 @@ export async function ingestExternalRollupsToD1(
   for (const dayEntry of dayEntries) {
     const rollupId = `${workspace.id}:${dayEntry.day}`
     statements.push(
-      env.DB.prepare(
-        `INSERT INTO daily_usage_rollups (
-          id, workspace_id, usage_date, environment, requests, total_tokens, input_tokens,
-          output_tokens, cached_tokens, estimated_cost_usd, error_count, avg_latency_ms,
-          p95_latency_ms, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).bind(
+      buildDailyUsageInsert(
+        env.DB,
         rollupId,
         workspace.id,
-        dayEntry.day,
         environment,
-        dayEntry.requests,
-        dayEntry.totalTokens,
-        dayEntry.inputTokens,
-        dayEntry.outputTokens,
-        dayEntry.cachedTokens,
-        roundCurrency(dayEntry.cost),
-        dayEntry.errorCount,
-        Math.max(0, Math.round(dayEntry.avgLatencyMs)),
-        Math.max(0, Math.round(dayEntry.p95LatencyMs)),
+        dayEntry,
         nowMs,
+        dailyActualCostAvailable,
       ),
     )
 
@@ -283,16 +303,13 @@ export async function ingestExternalRollupsToD1(
     )) {
       const modelId = `${rollupId}:${values.provider}:${values.model}`
       statements.push(
-        env.DB.prepare(
-          'INSERT INTO model_daily_usage (id, rollup_id, model, provider, requests, tokens, estimated_cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).bind(
+        buildModelUsageInsert(
+          env.DB,
           modelId,
           rollupId,
-          values.model,
-          values.provider,
-          values.requests,
-          values.tokens,
+          values,
           roundCurrency(values.cost || 0),
+          modelTokenDimensionsAvailable,
         ),
       )
     }
@@ -305,6 +322,11 @@ export async function ingestExternalRollupsToD1(
     nowMs,
   )
   await env.DB.batch([...statements, ...issueStatements])
+  await captureCurrentDayPricingAfterIngest(
+    env,
+    dayEntries,
+    options.capturePricing || loadPublicModelPricing,
+  )
 
   return {
     rowsWritten: dayEntries.length,
@@ -358,13 +380,21 @@ export async function syncOpenAiUsageToD1(
       entry.totalTokens += totalTokens
 
       const modelEntry = entry.models.get(model) ?? {
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        inputTokens: 0,
         model,
+        outputTokens: 0,
         provider: OPENAI_PROVIDER,
+        reasoningTokens: 0,
         requests: 0,
         tokens: 0,
       }
       modelEntry.requests += requests
       modelEntry.tokens += totalTokens
+      modelEntry.inputTokens += Math.max(0, inputTokens - cachedTokens)
+      modelEntry.outputTokens += outputTokens
+      modelEntry.cacheReadTokens += cachedTokens
       entry.models.set(model, modelEntry)
     }
   }
@@ -372,10 +402,19 @@ export async function syncOpenAiUsageToD1(
   for (const bucket of costResponse.data ?? []) {
     const day = formatUtcDayFromSeconds(bucket.start_time)
     const entry = getOrCreateDay(dayMap, day)
-    entry.cost += (bucket.results ?? []).reduce(
-      (sum, result) => sum + toNumber(result.amount?.value),
-      0,
-    )
+    for (const result of bucket.results ?? []) {
+      const amount = toFiniteActualCost(result.amount?.value)
+      if (amount !== null) {
+        entry.actualCostObservedSessions += 1
+        entry.actualCostUsd = (entry.actualCostUsd || 0) + amount
+      }
+    }
+  }
+
+  for (const entry of dayMap.values()) {
+    if (entry.actualCostObservedSessions > 0) {
+      entry.actualCostObservedTokens = entry.totalTokens
+    }
   }
 
   const dayEntries = [...dayMap.values()].sort((left, right) =>
@@ -394,6 +433,8 @@ export async function syncOpenAiUsageToD1(
 
   const firstDay = dayEntries[0].day
   const lastDay = dayEntries[dayEntries.length - 1].day
+  const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
+  const dailyActualCostAvailable = await hasDailyActualCostColumns(env.DB)
 
   await env.DB.batch([
     env.DB.prepare(
@@ -409,24 +450,14 @@ export async function syncOpenAiUsageToD1(
   for (const dayEntry of dayEntries) {
     const rollupId = `${workspace.id}:${dayEntry.day}`
     statements.push(
-      env.DB.prepare(
-        `INSERT INTO daily_usage_rollups (
-          id, workspace_id, usage_date, environment, requests, total_tokens, input_tokens,
-          output_tokens, cached_tokens, estimated_cost_usd, error_count, avg_latency_ms,
-          p95_latency_ms, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)`,
-      ).bind(
+      buildDailyUsageInsert(
+        env.DB,
         rollupId,
         workspace.id,
-        dayEntry.day,
         environment,
-        dayEntry.requests,
-        dayEntry.totalTokens,
-        dayEntry.inputTokens,
-        dayEntry.outputTokens,
-        dayEntry.cachedTokens,
-        roundCurrency(dayEntry.cost),
+        dayEntry,
         nowMs,
+        dailyActualCostAvailable,
       ),
     )
 
@@ -441,16 +472,13 @@ export async function syncOpenAiUsageToD1(
           : 0
       const modelId = `${rollupId}:${values.provider}:${values.model}`
       statements.push(
-        env.DB.prepare(
-          'INSERT INTO model_daily_usage (id, rollup_id, model, provider, requests, tokens, estimated_cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        ).bind(
+        buildModelUsageInsert(
+          env.DB,
           modelId,
           rollupId,
-          values.model,
-          values.provider,
-          values.requests,
-          values.tokens,
+          values,
           allocatedCost,
+          modelTokenDimensionsAvailable,
         ),
       )
     }
@@ -463,12 +491,186 @@ export async function syncOpenAiUsageToD1(
     nowMs,
   )
   await env.DB.batch([...statements, ...issueStatements])
+  await captureCurrentDayPricingAfterIngest(
+    env,
+    dayEntries,
+    loadPublicModelPricing,
+  )
 
   return {
     rowsWritten: dayEntries.length,
     sourceLabel: 'Live OpenAI usage data',
     syncedAt: new Date(nowMs).toISOString(),
   }
+}
+
+async function captureCurrentDayPricingAfterIngest(
+  env: CloudflareAppEnv,
+  dayEntries: DayAccumulator[],
+  capturePricing: (
+    env: CloudflareAppEnv,
+    references: ModelPricingReference[],
+  ) => Promise<unknown>,
+) {
+  const currentDay = formatUtcDay(new Date())
+  const references = dayEntries.flatMap((entry) =>
+    entry.day === currentDay
+      ? [...entry.models.values()].map((model) => ({
+          effectiveDay: currentDay,
+          model: model.model,
+          provider: model.provider,
+        }))
+      : [],
+  )
+  if (references.length === 0) return
+  try {
+    await capturePricing(env, references)
+  } catch {
+    // Pricing is optional enrichment and must not reject otherwise valid usage.
+  }
+}
+
+async function hasModelTokenDimensions(db: D1Database) {
+  try {
+    const result = await db
+      .prepare('PRAGMA table_info(model_daily_usage)')
+      .all<{ name: string }>()
+    const columns = new Set(result.results.map((column) => column.name))
+    return [
+      'input_tokens',
+      'output_tokens',
+      'cache_read_tokens',
+      'cache_write_tokens',
+      'reasoning_tokens',
+    ].every((column) => columns.has(column))
+  } catch {
+    return false
+  }
+}
+
+async function hasDailyActualCostColumns(db: D1Database) {
+  try {
+    const result = await db
+      .prepare('PRAGMA table_info(daily_usage_rollups)')
+      .all<{ name: string }>()
+    const columns = new Set(result.results.map((column) => column.name))
+    return [
+      'actual_cost_usd',
+      'actual_cost_observed_sessions',
+      'actual_cost_observed_tokens',
+    ].every((column) => columns.has(column))
+  } catch {
+    return false
+  }
+}
+
+function buildDailyUsageInsert(
+  db: D1Database,
+  rollupId: string,
+  workspaceId: string,
+  environment: string,
+  values: DayAccumulator,
+  createdAt: number,
+  actualCostAvailable: boolean,
+) {
+  const baseValues = [
+    rollupId,
+    workspaceId,
+    values.day,
+    environment,
+    values.requests,
+    values.totalTokens,
+    values.inputTokens,
+    values.outputTokens,
+    values.cachedTokens,
+    roundCurrency(values.cost),
+  ] as const
+  const trailingValues = [
+    values.errorCount,
+    Math.max(0, Math.round(values.avgLatencyMs)),
+    Math.max(0, Math.round(values.p95LatencyMs)),
+    createdAt,
+  ] as const
+
+  if (!actualCostAvailable) {
+    return db
+      .prepare(
+        `INSERT INTO daily_usage_rollups (
+          id, workspace_id, usage_date, environment, requests, total_tokens,
+          input_tokens, output_tokens, cached_tokens, estimated_cost_usd,
+          error_count, avg_latency_ms, p95_latency_ms, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(...baseValues, ...trailingValues)
+  }
+
+  return db
+    .prepare(
+      `INSERT INTO daily_usage_rollups (
+        id, workspace_id, usage_date, environment, requests, total_tokens,
+        input_tokens, output_tokens, cached_tokens, estimated_cost_usd,
+        actual_cost_usd, actual_cost_observed_sessions,
+        actual_cost_observed_tokens, error_count, avg_latency_ms,
+        p95_latency_ms, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      ...baseValues,
+      values.actualCostObservedSessions > 0 && values.actualCostUsd !== null
+        ? roundCurrency(values.actualCostUsd)
+        : null,
+      values.actualCostObservedSessions,
+      values.actualCostObservedTokens,
+      ...trailingValues,
+    )
+}
+
+function buildModelUsageInsert(
+  db: D1Database,
+  modelId: string,
+  rollupId: string,
+  values: ModelUsageAccumulator,
+  cost: number,
+  dimensionsAvailable: boolean,
+) {
+  if (!dimensionsAvailable) {
+    return db
+      .prepare(
+        'INSERT INTO model_daily_usage (id, rollup_id, model, provider, requests, tokens, estimated_cost_usd) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      )
+      .bind(
+        modelId,
+        rollupId,
+        values.model,
+        values.provider,
+        values.requests,
+        values.tokens,
+        cost,
+      )
+  }
+
+  return db
+    .prepare(
+      `INSERT INTO model_daily_usage (
+         id, rollup_id, model, provider, requests, tokens, input_tokens,
+         output_tokens, cache_read_tokens, cache_write_tokens, reasoning_tokens,
+         estimated_cost_usd
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    )
+    .bind(
+      modelId,
+      rollupId,
+      values.model,
+      values.provider,
+      values.requests,
+      values.tokens,
+      values.inputTokens,
+      values.outputTokens,
+      values.cacheReadTokens,
+      values.cacheWriteTokens,
+      values.reasoningTokens,
+      cost,
+    )
 }
 
 async function loadSnapshotFromD1(
@@ -478,11 +680,13 @@ async function loadSnapshotFromD1(
   sourceLabel = buildCombinedSourceLabel(selections),
 ): Promise<DashboardSnapshot> {
   const workspaceIds = selections.map((selection) => selection.workspace.id)
+  const dailyActualCostAvailable = await hasDailyActualCostColumns(env.DB)
   const rows = await loadDailyRollups(
     env.DB,
     workspaceIds,
     queryRange.startDay,
     queryRange.endDay,
+    dailyActualCostAvailable,
   )
   const availableProjects = selections.map(({ latestCreatedAt, latestDay, workspace }) => ({
     latestGeneratedAt: new Date(latestCreatedAt).toISOString(),
@@ -529,11 +733,13 @@ async function loadSnapshotFromD1(
 
   const firstDay = getRangeStart(rows)
   const lastDay = getRangeEnd(rows)
+  const modelTokenDimensionsAvailable = await hasModelTokenDimensions(env.DB)
   const rawModelRowsByDay = await loadModelUsageByDay(
     env.DB,
     workspaceIds,
     firstDay,
     lastDay,
+    modelTokenDimensionsAvailable,
   )
   const dailyRows = rows.filter((row) => !isTimestampBucket(row.day))
   const storedHourlyRows = rows.filter((row) => isTimestampBucket(row.day))
@@ -558,7 +764,21 @@ async function loadSnapshotFromD1(
   const models =
     hourlyModelRowsByDay.length > 0
       ? summarizeModelRows(resolvedModelRowsByDay)
-      : await loadModelSummary(env.DB, workspaceIds, firstDay, lastDay)
+      : await loadModelSummary(
+          env.DB,
+          workspaceIds,
+          firstDay,
+          lastDay,
+          modelTokenDimensionsAvailable,
+        )
+  const publicPricing = await loadPublicModelPricing(
+    env,
+    resolvedModelRowsByDay.map((model) => ({
+      effectiveDay: model.day.slice(0, 10),
+      model: model.model,
+      provider: model.provider,
+    })),
+  )
 
   return buildSnapshotFromRollups({
     availableProjects,
@@ -572,6 +792,7 @@ async function loadSnapshotFromD1(
     issuesByDay,
     models,
     modelRowsByDay: resolvedModelRowsByDay,
+    publicPricing,
     selectedProjectIds: availableProjects.map((project) => project.projectId),
     sourceLabel,
     statusNote: buildCombinedStatusNote(selections),
@@ -740,6 +961,7 @@ async function loadDailyRollups(
   workspaceIds: string[],
   startDay: string,
   endDay: string,
+  actualCostAvailable: boolean,
 ) {
   if (workspaceIds.length === 0) {
     return [] satisfies DailyRollupRow[]
@@ -747,6 +969,13 @@ async function loadDailyRollups(
 
   const endDayExclusive = shiftUtcDay(endDay, 1)
   const placeholders = workspaceIds.map(() => '?').join(', ')
+  const actualCosts = actualCostAvailable
+    ? `daily_usage_rollups.actual_cost_usd as actualCostUsd,
+       daily_usage_rollups.actual_cost_observed_sessions as actualCostObservedSessions,
+       daily_usage_rollups.actual_cost_observed_tokens as actualCostObservedTokens,`
+    : `NULL as actualCostUsd,
+       0 as actualCostObservedSessions,
+       0 as actualCostObservedTokens,`
   const result = await db
     .prepare(
       `SELECT
@@ -758,6 +987,7 @@ async function loadDailyRollups(
          daily_usage_rollups.output_tokens as outputTokens,
          daily_usage_rollups.cached_tokens as cachedTokens,
          daily_usage_rollups.estimated_cost_usd as cost,
+         ${actualCosts}
          daily_usage_rollups.created_at as createdAt,
          workspaces.id as projectId,
          workspaces.name as projectName,
@@ -781,12 +1011,24 @@ async function loadModelSummary(
   workspaceIds: string[],
   startDay: string,
   endDay: string,
+  dimensionsAvailable: boolean,
 ) {
   if (workspaceIds.length === 0) {
     return [] satisfies ModelSummaryRow[]
   }
 
   const placeholders = workspaceIds.map(() => '?').join(', ')
+  const dimensions = dimensionsAvailable
+    ? `SUM(model_daily_usage.input_tokens) as inputTokens,
+       SUM(model_daily_usage.output_tokens) as outputTokens,
+       SUM(model_daily_usage.cache_read_tokens) as cacheReadTokens,
+       SUM(model_daily_usage.cache_write_tokens) as cacheWriteTokens,
+       SUM(model_daily_usage.reasoning_tokens) as reasoningTokens,`
+    : `0 as inputTokens,
+       0 as outputTokens,
+       0 as cacheReadTokens,
+       0 as cacheWriteTokens,
+       0 as reasoningTokens,`
   const result = await db
     .prepare(
       `SELECT
@@ -794,6 +1036,7 @@ async function loadModelSummary(
          model_daily_usage.provider as provider,
          SUM(model_daily_usage.requests) as requests,
          SUM(model_daily_usage.tokens) as tokens,
+         ${dimensions}
          SUM(model_daily_usage.estimated_cost_usd) as cost
        FROM model_daily_usage
        INNER JOIN daily_usage_rollups ON daily_usage_rollups.id = model_daily_usage.rollup_id
@@ -813,12 +1056,24 @@ async function loadModelUsageByDay(
   workspaceIds: string[],
   startDay: string,
   endDay: string,
+  dimensionsAvailable: boolean,
 ) {
   if (workspaceIds.length === 0) {
     return [] satisfies DashboardModelDailyUsage[]
   }
 
   const placeholders = workspaceIds.map(() => '?').join(', ')
+  const dimensions = dimensionsAvailable
+    ? `model_daily_usage.input_tokens as inputTokens,
+       model_daily_usage.output_tokens as outputTokens,
+       model_daily_usage.cache_read_tokens as cacheReadTokens,
+       model_daily_usage.cache_write_tokens as cacheWriteTokens,
+       model_daily_usage.reasoning_tokens as reasoningTokens,`
+    : `0 as inputTokens,
+       0 as outputTokens,
+       0 as cacheReadTokens,
+       0 as cacheWriteTokens,
+       0 as reasoningTokens,`
   const result = await db
     .prepare(
       `SELECT
@@ -827,6 +1082,7 @@ async function loadModelUsageByDay(
          model_daily_usage.provider as provider,
          model_daily_usage.requests as requests,
          model_daily_usage.tokens as tokens,
+         ${dimensions}
          model_daily_usage.estimated_cost_usd as cost,
          workspaces.id as projectId,
          workspaces.name as projectName,
@@ -902,6 +1158,12 @@ function aggregateRollupRowsByDay(rows: DailyRollupRow[]) {
     const key = `${row.projectId}:${day}`
     const current = rowMap.get(key)
     if (current) {
+      current.actualCostObservedSessions += row.actualCostObservedSessions
+      current.actualCostObservedTokens += row.actualCostObservedTokens
+      if (row.actualCostObservedSessions > 0) {
+        current.actualCostUsd =
+          (current.actualCostUsd || 0) + (row.actualCostUsd || 0)
+      }
       current.cachedTokens += row.cachedTokens
       current.cost += row.cost
       current.inputTokens += row.inputTokens
@@ -930,7 +1192,12 @@ function aggregateModelRowsByDay(rows: DashboardModelDailyUsage[]) {
     const key = `${row.projectId}:${day}:${row.provider}:${row.model}`
     const current = rowMap.get(key)
     if (current) {
+      current.cacheReadTokens = (current.cacheReadTokens || 0) + (row.cacheReadTokens || 0)
+      current.cacheWriteTokens = (current.cacheWriteTokens || 0) + (row.cacheWriteTokens || 0)
       current.cost += row.cost
+      current.inputTokens = (current.inputTokens || 0) + (row.inputTokens || 0)
+      current.outputTokens = (current.outputTokens || 0) + (row.outputTokens || 0)
+      current.reasoningTokens = (current.reasoningTokens || 0) + (row.reasoningTokens || 0)
       current.requests += row.requests
       current.tokens += row.tokens
       continue
@@ -952,16 +1219,26 @@ function summarizeModelRows(rows: DashboardModelDailyUsage[]) {
     const key = `${row.provider}:${row.model}`
     const current = modelMap.get(key)
     if (current) {
+      current.cacheReadTokens += row.cacheReadTokens || 0
+      current.cacheWriteTokens += row.cacheWriteTokens || 0
       current.cost += row.cost
+      current.inputTokens += row.inputTokens || 0
+      current.outputTokens += row.outputTokens || 0
+      current.reasoningTokens += row.reasoningTokens || 0
       current.requests += row.requests
       current.tokens += row.tokens
       continue
     }
 
     modelMap.set(key, {
+      cacheReadTokens: row.cacheReadTokens || 0,
+      cacheWriteTokens: row.cacheWriteTokens || 0,
       cost: row.cost,
+      inputTokens: row.inputTokens || 0,
       model: row.model,
+      outputTokens: row.outputTokens || 0,
       provider: row.provider,
+      reasoningTokens: row.reasoningTokens || 0,
       requests: row.requests,
       tokens: row.tokens,
     })
@@ -1161,6 +1438,9 @@ async function loadOpenAiHourlyRows(
     const totalTokens = inputTokens + outputTokens
 
     return {
+      actualCostObservedSessions: 0,
+      actualCostObservedTokens: 0,
+      actualCostUsd: null,
       cachedTokens,
       cost: 0,
       createdAt: bucket.start_time * 1000,
@@ -1339,30 +1619,36 @@ function normalizeExternalRollup(
     rollup.totalTokens || inputTokens + outputTokens + cachedTokens,
   )
   const requests = Math.max(0, rollup.requests)
-  const models = new Map<
-    string,
-    {
-      cost?: number
-      model: string
-      provider: string
-      requests: number
-      tokens: number
-    }
-  >()
+  const actualCostUsd = toFiniteActualCost(rollup.actualCostUsd)
+  const hasActualCost =
+    actualCostUsd !== null && (rollup.actualCostObservedSessions || 0) > 0
+  const models: DayAccumulator['models'] = new Map()
 
   for (const model of rollup.models || []) {
     const provider = model.provider || defaultProvider
     const key = `${provider}:${model.model}`
     models.set(key, {
+      cacheReadTokens: Math.max(0, model.cacheReadTokens || 0),
+      cacheWriteTokens: Math.max(0, model.cacheWriteTokens || 0),
       cost: model.estimatedCostUsd || 0,
+      inputTokens: Math.max(0, model.inputTokens || 0),
       model: model.model,
+      outputTokens: Math.max(0, model.outputTokens || 0),
       provider,
+      reasoningTokens: Math.max(0, model.reasoningTokens || 0),
       requests: Math.max(0, model.requests || 0),
       tokens: Math.max(0, model.tokens || 0),
     })
   }
 
   return {
+    actualCostObservedSessions: hasActualCost
+      ? Math.max(0, rollup.actualCostObservedSessions || 0)
+      : 0,
+    actualCostObservedTokens: hasActualCost
+      ? Math.min(totalTokens, Math.max(0, rollup.actualCostObservedTokens || 0))
+      : 0,
+    actualCostUsd: hasActualCost ? actualCostUsd : null,
     avgLatencyMs: Math.max(0, rollup.avgLatencyMs || 0),
     cachedTokens,
     cost: Math.max(0, rollup.estimatedCostUsd || 0),
@@ -1390,6 +1676,9 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
   }
 
   const created: DayAccumulator = {
+    actualCostObservedSessions: 0,
+    actualCostObservedTokens: 0,
+    actualCostUsd: null,
     avgLatencyMs: 0,
     cachedTokens: 0,
     cost: 0,
@@ -1397,16 +1686,7 @@ function getOrCreateDay(map: Map<string, DayAccumulator>, day: string) {
     errorCount: 0,
     inputTokens: 0,
     issues: [],
-    models: new Map<
-      string,
-      {
-        cost?: number
-        model: string
-        provider: string
-        requests: number
-        tokens: number
-      }
-    >(),
+    models: new Map(),
     outputTokens: 0,
     p95LatencyMs: 0,
     requests: 0,
@@ -1565,6 +1845,14 @@ function slugify(input: string) {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
+}
+
+function toFiniteActualCost(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') {
+    return null
+  }
+  const numeric = typeof value === 'number' ? value : Number(value)
+  return Number.isFinite(numeric) ? numeric : null
 }
 
 function toNumber(value: number | string | null | undefined) {

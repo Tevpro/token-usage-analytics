@@ -425,6 +425,79 @@ function Home() {
         ))}
       </section>
 
+      <section className="cost-summary-grid grid gap-4 xl:grid-cols-2">
+        <Card className="border-slate-200 bg-slate-50/70">
+          <CardContent className="flex flex-col gap-3 py-5 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-medium text-slate-600">
+                {activeSnapshot.pricing.label}
+              </p>
+              <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
+                {activeSnapshot.pricing.projectedCostMicroUsd === null
+                  ? 'Pricing unavailable'
+                  : formatMicroUsd(
+                      activeSnapshot.pricing.projectedCostMicroUsd,
+                    )}
+              </p>
+            </div>
+            <div className="max-w-xl text-sm text-slate-600 md:text-right">
+              <p>
+                {activeSnapshot.pricing.totalTokens > 0
+                  ? `${(activeSnapshot.pricing.coverageRatio * 100).toFixed(1)}% of selected model tokens priced`
+                  : 'No model tokens in the selected range'}
+                {activeSnapshot.pricing.availability === 'stale'
+                  ? ' using stale cached rates'
+                  : ''}
+                .
+              </p>
+              {activeSnapshot.pricing.unpricedModels.length > 0 ? (
+                <p className="mt-1">
+                  Unpriced:{' '}
+                  {activeSnapshot.pricing.unpricedModels.slice(0, 3).join(', ')}
+                  {activeSnapshot.pricing.unpricedModels.length > 3 ? '…' : ''}
+                </p>
+              ) : null}
+              {activeSnapshot.pricing.sourceUrl ? (
+                <a
+                  className="mt-1 inline-block text-blue-700 underline-offset-4 hover:underline"
+                  href={activeSnapshot.pricing.sourceUrl}
+                  rel="noreferrer"
+                  target="_blank"
+                >
+                  Public catalog source
+                </a>
+              ) : null}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="border-slate-200 bg-white">
+          <CardContent className="flex flex-col gap-3 py-5 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-medium text-slate-600">
+                Actual provider-reported cost
+              </p>
+              <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950">
+                {activeSnapshot.actualCost.reportedCostUsd === null
+                  ? 'Unavailable'
+                  : formatCurrency(activeSnapshot.actualCost.reportedCostUsd)}
+              </p>
+            </div>
+            <div className="max-w-xl text-sm text-slate-600 md:text-right">
+              <p>
+                {activeSnapshot.actualCost.totalTokens > 0
+                  ? `${(activeSnapshot.actualCost.coverageRatio * 100).toFixed(1)}% of selected tokens have actual-cost observations.`
+                  : 'No tokens in the selected range.'}
+              </p>
+              <p className="mt-1">
+                Missing actual cost remains unavailable; reported zero remains
+                $0.00.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
       {activeTab === 'overview' ? (
         <>
           <section className="analytics-grid analytics-grid-top">
@@ -696,7 +769,7 @@ function Home() {
       ) : null}
 
       {activeTab === 'cost' ? (
-        <>
+        <div className="cost-tab-content">
           <section className="analytics-grid analytics-grid-top">
             <ChartCard
               action={
@@ -829,7 +902,7 @@ function Home() {
               </Table>
             </CardContent>
           </Card>
-        </>
+        </div>
       ) : null}
     </main>
   )
@@ -1716,6 +1789,15 @@ function calculateAverageTrafficCacheShare(data: Array<{ primary: number; tertia
 
 function formatCurrency(value: number) {
   return `$${value.toFixed(2)}`
+}
+
+function formatMicroUsd(value: number) {
+  return new Intl.NumberFormat('en-US', {
+    currency: 'USD',
+    maximumFractionDigits: 6,
+    minimumFractionDigits: 2,
+    style: 'currency',
+  }).format(value / 1_000_000)
 }
 
 function formatModelLabel(model: string, provider: string) {
