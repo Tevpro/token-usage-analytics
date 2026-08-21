@@ -8,6 +8,15 @@ on:
       - "apps/dashboard/**"
       - ".github/workflows/deploy.yml"
   workflow_dispatch:
+    inputs:
+      operation:
+        description: "Production operation to run"
+        required: true
+        default: deploy
+        type: choice
+        options:
+          - deploy
+          - delete-tevpro-dot
 
 concurrency:
   group: cloudflare-production
@@ -44,13 +53,85 @@ jobs:
         run: nub install --frozen-lockfile
 
       - name: Build app
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         run: nub run build
 
       - name: Apply remote D1 migrations
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         run: nubx wrangler d1 migrations apply token_analytics --remote
 
       - name: Deploy worker
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         run: nubx wrangler deploy
 
       - name: Deploy daily pricing snapshot worker
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         run: nubx wrangler deploy --config wrangler.pricing.jsonc
+
+      - name: Preflight tevpro-dot deletion
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'delete-tevpro-dot'
+        run: |
+          set -euo pipefail
+          nubx wrangler d1 execute token_analytics --remote --json --command "
+            SELECT
+              (SELECT COUNT(*) FROM workspaces WHERE slug = 'tevpro-dot') AS workspaces,
+              (SELECT COUNT(*) FROM daily_usage_rollups WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot')) AS daily_rollups,
+              (SELECT COUNT(*) FROM model_daily_usage WHERE rollup_id IN (SELECT id FROM daily_usage_rollups WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot'))) AS model_rollups,
+              (SELECT COUNT(*) FROM tool_daily_usage WHERE rollup_id IN (SELECT id FROM daily_usage_rollups WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot'))) AS tool_rollups,
+              (SELECT COUNT(*) FROM issue_events WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot')) AS issue_events,
+              (SELECT COUNT(*) FROM repositories WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot')) AS repositories,
+              (SELECT COUNT(*) FROM repository_daily_usage WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot')) AS repository_rollups,
+              (SELECT COUNT(*) FROM repository_model_daily_usage WHERE repository_rollup_id IN (SELECT id FROM repository_daily_usage WHERE workspace_id IN (SELECT id FROM workspaces WHERE slug = 'tevpro-dot'))) AS repository_model_rollups;
+          " > /tmp/tevpro-dot-preflight.json
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const payload = JSON.parse(fs.readFileSync('/tmp/tevpro-dot-preflight.json', 'utf8'))
+          const row = payload.flatMap((entry) => entry.results ?? [])[0]
+          if (!row || row.workspaces !== 1) {
+            throw new Error(`Expected exactly one tevpro-dot workspace; got ${row?.workspaces ?? 'no result'}`)
+          }
+          console.log(JSON.stringify(row, null, 2))
+          NODE
+
+      - name: Delete tevpro-dot workspace and cascaded usage
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'delete-tevpro-dot'
+        run: |
+          set -euo pipefail
+          nubx wrangler d1 execute token_analytics --remote --json --command \
+            "DELETE FROM workspaces WHERE slug = 'tevpro-dot' RETURNING slug;" \
+            > /tmp/tevpro-dot-delete.json
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const payload = JSON.parse(fs.readFileSync('/tmp/tevpro-dot-delete.json', 'utf8'))
+          const rows = payload.flatMap((entry) => entry.results ?? [])
+          if (rows.length !== 1 || rows[0].slug !== 'tevpro-dot') {
+            throw new Error(`Expected one deleted tevpro-dot workspace; got ${JSON.stringify(rows)}`)
+          }
+          console.log('Deleted exactly one tevpro-dot workspace; ON DELETE CASCADE removed owned usage rows.')
+          NODE
+
+      - name: Verify tevpro-dot deletion
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'delete-tevpro-dot'
+        run: |
+          set -euo pipefail
+          nubx wrangler d1 execute token_analytics --remote --json --command "
+            SELECT
+              (SELECT COUNT(*) FROM workspaces WHERE slug = 'tevpro-dot') AS workspaces,
+              (SELECT COUNT(*) FROM daily_usage_rollups WHERE workspace_id NOT IN (SELECT id FROM workspaces)) AS orphan_daily_rollups,
+              (SELECT COUNT(*) FROM issue_events WHERE workspace_id NOT IN (SELECT id FROM workspaces)) AS orphan_issue_events,
+              (SELECT COUNT(*) FROM repositories WHERE workspace_id NOT IN (SELECT id FROM workspaces)) AS orphan_repositories,
+              (SELECT COUNT(*) FROM repository_daily_usage WHERE workspace_id NOT IN (SELECT id FROM workspaces)) AS orphan_repository_rollups,
+              (SELECT COUNT(*) FROM model_daily_usage WHERE rollup_id NOT IN (SELECT id FROM daily_usage_rollups)) AS orphan_model_rollups,
+              (SELECT COUNT(*) FROM tool_daily_usage WHERE rollup_id NOT IN (SELECT id FROM daily_usage_rollups)) AS orphan_tool_rollups,
+              (SELECT COUNT(*) FROM repository_model_daily_usage WHERE repository_rollup_id NOT IN (SELECT id FROM repository_daily_usage)) AS orphan_repository_model_rollups;
+          " > /tmp/tevpro-dot-verify.json
+          node - <<'NODE'
+          const fs = require('node:fs')
+          const payload = JSON.parse(fs.readFileSync('/tmp/tevpro-dot-verify.json', 'utf8'))
+          const row = payload.flatMap((entry) => entry.results ?? [])[0]
+          if (!row) throw new Error('Verification query returned no result')
+          const failures = Object.entries(row).filter(([, value]) => value !== 0)
+          if (failures.length) throw new Error(`Deletion verification failed: ${JSON.stringify(Object.fromEntries(failures))}`)
+          console.log(JSON.stringify(row, null, 2))
+          console.log('Verified: tevpro-dot is absent and all workspace ownership foreign-key chains remain intact.')
+          NODE
