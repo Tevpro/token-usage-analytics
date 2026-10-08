@@ -2007,6 +2007,103 @@ describe('ingestExternalRollupsToD1', () => {
     expect(result.snapshot.table).toEqual([])
   })
 
+  it('only compares daily buckets with daily buckets when detecting anomalies', async () => {
+    const db = new FakeD1Database()
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+    const bucket = (usageDate: string, scale: number) => ({
+      cachedTokens: 300 * scale,
+      estimatedCostUsd: 0.1 * scale,
+      inputTokens: 700 * scale,
+      outputTokens: 300 * scale,
+      requests: 2 * scale,
+      totalTokens: 1000 * scale,
+      usageDate,
+    })
+
+    // Same shape the Hermes plugin publishes: every day in the window plus
+    // the trailing 24 hourly buckets, in one payload.
+    await ingestExternalRollupsToD1(env, {
+      environment: 'production',
+      generatedAt: '2026-10-08T01:30:00Z',
+      rollups: [
+        bucket('2026-10-07', 10),
+        bucket('2026-10-07T22:00:00Z', 1),
+        bucket('2026-10-07T23:00:00Z', 1),
+        bucket('2026-10-08', 10),
+        bucket('2026-10-08T00:00:00Z', 4),
+        bucket('2026-10-08T01:00:00Z', 6),
+      ],
+      workspace: { name: 'Hermes Usage', provider: 'Hermes', slug: 'hermes' },
+    })
+
+    expect(
+      db.batches[0].filter((statement) =>
+        statement.sql.includes('INSERT INTO issue_events'),
+      ),
+    ).toEqual([])
+  })
+
+  it('reports a real day-over-day spike once when hourly buckets are present', async () => {
+    const db = new FakeD1Database()
+    const env = {
+      APP_ENV: 'production',
+      DB: db as unknown as D1Database,
+    } satisfies CloudflareAppEnv
+    const bucket = (usageDate: string, scale: number, cachedShare = 0.3) => ({
+      cachedTokens: Math.round(1000 * scale * cachedShare),
+      estimatedCostUsd: 0.1 * scale,
+      inputTokens: 700 * scale,
+      outputTokens: 300 * scale,
+      requests: 2 * scale,
+      totalTokens: 1000 * scale,
+      usageDate,
+    })
+
+    await ingestExternalRollupsToD1(env, {
+      environment: 'production',
+      generatedAt: '2026-10-08T01:30:00Z',
+      rollups: [
+        bucket('2026-10-06', 10),
+        bucket('2026-10-07', 10),
+        bucket('2026-10-07T23:00:00Z', 2),
+        bucket('2026-10-08', 30, 0.01),
+        bucket('2026-10-08T00:00:00Z', 10, 0.01),
+        bucket('2026-10-08T01:00:00Z', 20, 0.01),
+      ],
+      workspace: { name: 'Hermes Usage', provider: 'Hermes', slug: 'hermes' },
+    })
+
+    const issueInserts = db.batches[0].filter((statement) =>
+      statement.sql.includes('INSERT INTO issue_events'),
+    )
+    expect(
+      issueInserts.map((statement) => ({
+        day: statement.params[3],
+        severity: statement.params[4],
+        title: statement.params[5],
+      })),
+    ).toEqual([
+      {
+        day: '2026-10-08',
+        severity: 'high',
+        title: 'Token volume jumped 300% day over day',
+      },
+      {
+        day: '2026-10-08',
+        severity: 'medium',
+        title: 'Tracked cost spiked 300% day over day',
+      },
+      {
+        day: '2026-10-08',
+        severity: 'medium',
+        title: 'Cached token share fell below 5%',
+      },
+    ])
+  })
+
   it('accepts heartbeat-only payloads without rollups', async () => {
     const db = new FakeD1Database()
     const env = {

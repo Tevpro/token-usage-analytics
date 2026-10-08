@@ -1711,9 +1711,14 @@ function buildIssueStatements(
     }
   }
 
-  for (let index = 1; index < days.length; index += 1) {
-    const previous = days[index - 1]
-    const current = days[index]
+  // Payloads can mix daily and hourly buckets (the Hermes plugin sends both),
+  // and they sort together by usage date. The comparative rules below are
+  // day-over-day, so only adjacent daily buckets may be compared.
+  const dailyBuckets = days.filter((day) => !isTimestampBucket(day.day))
+
+  for (let index = 1; index < dailyBuckets.length; index += 1) {
+    const previous = dailyBuckets[index - 1]
+    const current = dailyBuckets[index]
 
     if (
       previous.totalTokens > 0 &&
